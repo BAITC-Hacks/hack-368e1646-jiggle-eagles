@@ -1,0 +1,21 @@
+{
+  "name": "hackalem",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": ["frontend", "backend"],
+  "scripts": {
+    "dev": "concurrently --kill-others --names api,web \"npm run dev --workspace backend\" \"npm run dev --workspace frontend\"",
+    "typecheck": "npm run typecheck --workspaces",
+    "test": "node --import tsx --test backend/test/*.test.ts",
+    "build": "npm run typecheck && npm run build --workspaces",
+    "start": "npm run start --workspace backend",
+    "openai:check": "node --import tsx scripts/openai-check.ts"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.4",
+    "concurrently": "10.0.5",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  }
+}
