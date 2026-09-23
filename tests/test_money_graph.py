@@ -1,5 +1,6 @@
 """Deterministic, credential-free tests using hand-checkable synthetic motifs."""
 import csv
+import re
 from datetime import date
 import json
 from pathlib import Path
@@ -375,6 +376,38 @@ class HttpTests(unittest.TestCase):
                 finally:
                     server.shutdown()
                     thread.join()
+
+
+class StaticAssetTests(unittest.TestCase):
+    """The dashboard is inert unless index.html actually loads its behaviour scripts."""
+    STATIC = Path(__file__).resolve().parents[1] / 'money_graph' / 'static'
+
+    def scripts(self):
+        markup = (self.STATIC / 'index.html').read_text(encoding='utf-8')
+        return re.findall(r'<script\b([^>]*)>', markup)
+
+    def test_index_loads_the_dashboard_script(self):
+        srcs = [re.search(r'src="([^"]+)"', tag).group(1) for tag in self.scripts()]
+        self.assertIn('app.js', [src.rsplit('/', 1)[-1] for src in srcs],
+                      'index.html must load app.js; without it the upload inputs, '
+                      'analyse button, search and language selector have no listeners.')
+
+    def test_referenced_scripts_exist(self):
+        for tag in self.scripts():
+            name = re.search(r'src="([^"]+)"', tag).group(1).rsplit('/', 1)[-1]
+            with self.subTest(script=name):
+                self.assertTrue((self.STATIC / name).is_file(), f'{name} is referenced but missing')
+
+    def test_module_scripts_declare_type_module(self):
+        for tag in self.scripts():
+            name = re.search(r'src="([^"]+)"', tag).group(1).rsplit('/', 1)[-1]
+            path = self.STATIC / name
+            if not path.is_file():
+                continue
+            uses_esm = re.search(r'^\s*(import|export)\s', path.read_text(encoding='utf-8'), re.M)
+            with self.subTest(script=name):
+                self.assertEqual(bool(uses_esm), 'type="module"' in tag,
+                                 f'{name} uses ES module syntax iff it is loaded as type="module"')
 
 
 if __name__ == '__main__':
