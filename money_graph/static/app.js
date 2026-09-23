@@ -1,3 +1,4 @@
+import {createReviewPanel} from './review.js';
 import {initialize, t, number, date, timestamp, setLocale, currentLocale} from './i18n.js';
 const $ = (id) => document.getElementById(id);
 // SVG fills inherit theme variables: recoloring never rerenders or resets the graph.
@@ -24,9 +25,13 @@ let request = null;
 let routeVersion = 0;
 let routeTask = Promise.resolve();
 let pendingUpload = false;
+let uploadSending = false;
+let statusUnavailable = false;
+let statusFailures = 0;
 const routeId = () => location.pathname.match(/^\/analyses\/(startup|[0-9a-f]{32})$/)?.[1] || null;
 function showView(focus = false) {
   const id = routeId();
+  reviews.selectAnalysis(id && activeRevision === id && overview ? id : null);
   $('analysis-home').hidden = Boolean(id);
   $('results').hidden = !id;
   $('results-workspace').hidden = !id || activeRevision !== id || !overview;
@@ -129,7 +134,24 @@ function showError(id, error) {
   showMessage(id, errorPart(error));
   $(id).hidden = false;
 }
+// Bound upload/status waits; an uncertain upload is never automatically resubmitted.
+async function uploadRequest(url, options = {}, timeout = 10000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await fetch(url, {...options, signal: controller.signal});
+    const data = await response.json();
+    if (!response.ok) throw new ApiError(data, response.status);
+    return data;
+  } catch (error) {
+    if (controller.signal.aborted) throw new ApiError({error_message: {key: 'error.requestTimeout'}}, 0);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 async function get(url, signal) {
+  if (!signal) return uploadRequest(url);
   const response = await fetch(url, {signal});
   const data = await response.json();
   if (!response.ok) throw new ApiError(data, response.status);
@@ -166,7 +188,13 @@ async function inspect(gid) {
     if (request === controller) $('search-form').setAttribute('aria-busy', 'false');
   }
 }
+function methodText(key, params = {}) {
+  const source = current?.method_catalogs || overview?.method_catalogs;
+  const template = source?.[currentLocale()]?.[key] || source?.en?.[key];
+  return template ? template.replace(/\{(\w+)\}/g, (_, name) => String(params[name] ?? `{${name}}`)) : t(key, params);
+}
 function clusterDescription(cluster) {
+  if (!cluster.description_parts) return cluster.hypothesis;
   return cluster.description_parts.map(part => {
     const params = {...part.params};
     for (const [key, value] of Object.entries(params)) {
@@ -174,7 +202,7 @@ function clusterDescription(cluster) {
       if (key === 'inKzt' || key === 'outKzt') params[key] = number(Number(value), {minimumFractionDigits: 2});
     }
     if (part.key === 'cluster.roles') params.roles = Object.entries(cluster.role_counts).map(([key, count]) => `${role(key)}=${number(count)}`).join(', ');
-    return t(part.key, params);
+    return methodText(part.key, params);
   }).join(' ');
 }
 function renderAccount(reset = false) {
@@ -189,7 +217,8 @@ function renderAccount(reset = false) {
     metric(t('metric.outgoing'), number(a.out_kzt), t('metric.peers', {peers: number(a.out_deg), transfers: number(a.out_tx)})),
     metric(t('metric.confidence'), score(a.role_score), t('metric.activity', {depth: number(a.depth), days: number(a.active_days)})),
     metric(t('metric.priority'), score(a.priority_score), t('community.name', {id: a.cluster_id})));
-  $('rule').textContent = t(`rule.${a.role}`);
+  const parameters = current.rule_parameters || overview?.rule_parameters;
+  $('rule').textContent = parameters ? methodText(`rule.${a.role}`, parameters) : a.role_rule;
   // Keep the canonical English export evidence; other views use the same measured fields.
   $('evidence').textContent = currentLocale() === 'en' ? a.evidence : t('evidence.summary', {
     role: role(a.role), incoming: number(a.in_deg), outgoing: number(a.out_deg),
@@ -204,8 +233,10 @@ function renderAccount(reset = false) {
     list.append(element('li', `${t('contribution.' + key)}: +${number(value, {minimumFractionDigits: 6, maximumFractionDigits: 6})}`));
   }
   scoring.append(element('p', t('scoring.contributions')), list);
-  scoring.append(element('p', t('scoring.rules')));
-  scoring.append(element('p', t('scoring.formula')));
+  const methods = current.methods || overview?.methods;
+  scoring.append(element('p', methods?.confidence || a.why));
+  if (methods?.priority) scoring.append(element('p', methods.priority));
+  $('community-method').textContent = methods?.community || `${t('review.savedParameters')}: ${JSON.stringify(overview?.config || {})}`;
   const rows = data.edges.map(e => {
     const row = element('tr');
     const direction = element('td');
@@ -278,7 +309,8 @@ function drawGraph(reset = false) {
     hops: t(neighborhood.hops === 1 ? 'graph.oneHop' : 'graph.twoHops'), visible: number(neighborhood.nodes.length),
     total: number(neighborhood.total_nodes), links: number(links.length), omitted: number(neighborhood.omitted_nodes)});
   $('node-limit').textContent = t('graph.limit', {count: number(neighborhood.node_limit)});
-  $('expand').disabled = neighborhood.hops === 2;
+  $('expand').disabled = neighborhood.investigation || neighborhood.hops === 2;
+  if (neighborhood.investigation) $('graph-caption').textContent = t('review.graphCaption', {count: number(neighborhood.nodes.length), links: number(links.length)});
   if (reset) {
     const ring = Math.max(0, Math.ceil(shown.length / 12) - 1);
     const scale = Math.min(1, 920 / (2 * (270 + ring * 210) + 220), 560 / (2 * (165 + ring * 140) + 140));
@@ -329,6 +361,26 @@ async function expandGraph() {
     $('expand').disabled = false;
   }
 }
+const reviews = createReviewPanel({
+  captureGraph: () => ({current: current ? structuredClone(current) : null, camera: {...camera}, gid: $('gid').value, color: $('color-mode').value}),
+  showGraph: data => {
+    request?.abort(); graphRequest?.abort();
+    current = data;
+    current.initialGraph = structuredClone(data.graph);
+    $('account-area').hidden = false;
+    $('gid').value = data.account.gid;
+    renderAccount(true);
+  },
+  restoreGraph: saved => {
+    request?.abort(); graphRequest?.abort();
+    current = saved.current;
+    camera = saved.camera;
+    $('gid').value = saved.gid;
+    $('color-mode').value = saved.color;
+    $('account-area').hidden = !current;
+    if (current) renderAccount();
+  }
+});
 $('search-form').addEventListener('submit', e => {e.preventDefault(); inspect($('gid').value.trim());});
 $('color-mode').addEventListener('change', () => drawGraph());
 $('expand').addEventListener('click', expandGraph);
@@ -525,7 +577,7 @@ function renderStatus() {
 }
 let statusTimer = null;
 function uploadBusy(busy) {
-  busy = Boolean(busy || openingAnalysis);
+  busy = Boolean(busy || openingAnalysis || uploadSending || statusUnavailable);
   $('upload-form').setAttribute('aria-busy', String(busy));
   for (const input of $('upload-form').elements) input.disabled = busy;
   renderHistory();
@@ -533,7 +585,9 @@ function uploadBusy(busy) {
 async function pollStatus() {
   clearTimeout(statusTimer);
   try {
-    const status = await get('/api/status');
+    const status = await uploadRequest('/api/status');
+    statusUnavailable = false;
+    statusFailures = 0;
     const busy = ['receiving', 'validating', 'analyzing', 'exporting'].includes(status.state);
     uploadBusy(busy);
     analysisStatus = status;
@@ -550,34 +604,47 @@ async function pollStatus() {
     if (busy) statusTimer = setTimeout(pollStatus, 400);
     return status;
   } catch (error) {
-    uploadBusy(false);
+    statusUnavailable = true;
+    uploadBusy(true);
     showMessage('upload-error', {key: 'error.status', cause: errorPart(error)});
     $('upload-error').hidden = false;
+    statusTimer = setTimeout(pollStatus, Math.min(1000 * 2 ** statusFailures++, 8000));
     return null;
   }
 }
 $('upload-form').addEventListener('submit', async event => {
   event.preventDefault();
+  if ($('upload-form').getAttribute('aria-busy') === 'true') return;
   const form = new FormData($('upload-form'));
   const files = [...form.values()];
-  if (files.some(file => !file.size) || files.reduce((sum, file) => sum + file.size, 0) >= 64 * 1024 * 1024) {
-    showMessage('upload-error', {key: 'upload.invalid'});
+  let problem = files.some(file => !file.name) ? {key: 'upload.invalid'} : null;
+  for (const name of ['nodes', 'edges', 'transactions']) {
+    const file = form.get(name);
+    if (problem) break;
+    if (file.name !== `${name}.parquet`) problem = {key: 'upload.fileName', params: {expected: `${name}.parquet`, actual: file.name}};
+    else if (!file.size) problem = {key: 'error.emptyFile', params: {name}};
+  }
+  if (!problem && files.reduce((sum, file) => sum + file.size, 0) >= 64 * 1024 * 1024) problem = {key: 'error.uploadLimit'};
+  if (problem) {
+    showMessage('upload-error', problem);
     $('upload-error').hidden = false;
     return;
   }
+  uploadSending = true;
   uploadBusy(true);
   $('upload-error').hidden = true;
   showMessage('analysis-status', {key: 'upload.pending'});
   try {
-    const response = await fetch('/api/analysis', {method: 'POST', body: form});
-    const data = await response.json();
-    if (!response.ok) throw new ApiError(data, response.status);
+    await uploadRequest('/api/analysis', {method: 'POST', body: form}, 45000);
+    uploadSending = false;
     pendingUpload = true;
     await pollStatus();
   } catch (error) {
-    uploadBusy(false);
+    uploadSending = false;
     await pollStatus();
-    showError('upload-error', error);
+    const uncertain = !(error instanceof ApiError) || error.part.key === 'error.requestTimeout';
+    showMessage('upload-error', uncertain ? {key: 'error.uploadUnknown'} : errorPart(error));
+    $('upload-error').hidden = false;
   }
 });
 function renderFiles() {
@@ -590,6 +657,7 @@ function renderLanguage() {
   $('language').value = currentLocale();
   $('observation-period').textContent = `${date('2026-07-01')} – ${date('2026-07-31')}`;
   renderFiles();
+  reviews.render();
   renderOverview();
   renderStatus();
   renderHistory();
