@@ -1,8 +1,7 @@
 """Loopback dashboard with isolated upload runs and atomic in-memory publication."""
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
-from email import policy
-from email.parser import BytesParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import hashlib
@@ -16,13 +15,19 @@ import uuid
 
 import networkx as nx
 
-from .pipeline import Analysis, SCHEMAS, ValidationError, cluster_description_parts, dashboard_data, json_bytes, run
+from .pipeline import Analysis, SCHEMAS, ValidationError, dashboard_data, json_bytes, run
 from .i18n import message, render
+from .investigation.routes import handle_review
+from .investigation.service import ReviewService
+from .uploads import MAX_UPLOAD_BYTES, INPUT_NAMES, parse_upload, read_upload, analysis_failure
 
 NODE_LIMIT = 50
-MAX_UPLOAD_BYTES = 64 * 1024 * 1024
+# Compact per-account projection: the overview map plots every account at once.
+MAP_FIELDS = ('gid', 'role', 'cluster_id', 'depth', 'is_seed', 'boundary', 'in_deg', 'out_deg',
+              'in_kzt', 'out_kzt', 'in_tx', 'out_tx', 'role_score', 'priority_score')
+# Grouped flow schematic: how the network works, before any single account is opened.
+CLUSTER_GROUPS = 12
 MAX_DETAILS_BYTES = 16 * 1024
-INPUT_NAMES = ('nodes', 'edges', 'transactions')
 BUSY = {'receiving', 'validating', 'analyzing', 'exporting'}
 
 
@@ -34,6 +39,8 @@ class Snapshot:
     incident: dict
     peers: dict
     exports: dict[str, bytes]
+    map_payload: bytes
+    flow_payload: bytes
 
     @classmethod
     def create(cls, result: Analysis, out_dir: Path, revision: str) -> 'Snapshot':
@@ -62,16 +69,6 @@ class Snapshot:
     def from_result(cls, result: Analysis, exports: dict[str, bytes], revision: str,
                     data: dict | None = None) -> 'Snapshot':
         data = dashboard_data(result) if data is None else data
-        membership = {n['gid']: n['cluster_id'] for n in result.nodes}
-        data['clusters'] = [dict(cluster) for cluster in data['clusters']]
-        for cluster in data['clusters']:
-            cid = cluster['cluster_id']
-            members = [n for n in result.nodes if n['cluster_id'] == cid]
-            internal = [(a, b, d) for a, b, d in result.graph.edges(data=True)
-                        if membership[a] == cid == membership[b]]
-            cluster['description_parts'] = cluster_description_parts(members, internal, result.graph, membership)
-            cluster['role_counts'] = {role: sum(n['role'] == role for n in members)
-                                      for role in sorted({n['role'] for n in members})}
         nodes = {n['gid']: n for n in data['nodes']}
         incident: dict[str, list[dict]] = {gid: [] for gid in nodes}
         peers: dict[str, set[str]] = {gid: set() for gid in nodes}
@@ -82,7 +79,10 @@ class Snapshot:
                 incident[b].append(edge)
                 peers[a].add(b)
                 peers[b].add(a)
-        return cls(revision, data, nodes, incident, peers, exports)
+        map_payload = json_bytes(dict(revision=revision, profile=data['profile'],
+                                      nodes=[{field: node[field] for field in MAP_FIELDS} for node in data['nodes']]))
+        flow_payload = json_bytes(dict(revision=revision, modes=flow_modes(data['nodes'], data['edges'])))
+        return cls(revision, data, nodes, incident, peers, exports, map_payload, flow_payload)
 
     def neighborhood(self, gid: str, hops: int) -> dict:
         # Either direction defines hop distance; all display edges stay directed.
@@ -100,6 +100,67 @@ class Snapshot:
                     nodes=[dict(self.nodes[peer], hop=distances[peer]) for peer in ordered[:NODE_LIMIT]],
                     edges=edges)
 
+
+def flow_modes(nodes: list[dict], edges: list[dict]) -> dict:
+    """Collapse 2k accounts into a handful of groups per mode, keeping every KZT accounted for.
+
+    Grouping is presentation only: roles, scores and the CSV exports are untouched. Each mode
+    reports its groups and the directed money between them, so the schematic stays checkable
+    against nodes_roles.csv.
+    """
+    by_gid = {n['gid']: n for n in nodes}
+    ranked = [cluster for cluster, _ in Counter(n['cluster_id'] for n in nodes).most_common(CLUSTER_GROUPS)]
+    largest = set(ranked)
+
+    def role_key(node: dict) -> str:
+        return node['role']
+
+    def depth_role_key(node: dict) -> str:
+        return f"d{node['depth']}:{node['role']}"
+
+    def cluster_key(node: dict) -> str:
+        return f"c{node['cluster_id']}" if node['cluster_id'] in largest else 'other'
+
+    modes = {}
+    for name, key_of in [('role', role_key), ('depth_role', depth_role_key), ('cluster', cluster_key)]:
+        members: dict[str, list[dict]] = {}
+        for node in nodes:
+            members.setdefault(key_of(node), []).append(node)
+        internal: Counter = Counter()
+        internal_tx: Counter = Counter()
+        links: Counter = Counter()
+        link_tx: Counter = Counter()
+        for edge in edges:
+            source, target = key_of(by_gid[edge['src']]), key_of(by_gid[edge['dst']])
+            if source == target:
+                internal[source] += edge['sum_kzt']
+                internal_tx[source] += edge['n_tx']
+            else:
+                links[(source, target)] += edge['sum_kzt']
+                link_tx[(source, target)] += edge['n_tx']
+        groups = []
+        for key, group in members.items():
+            incoming = sum(value for (_, target), value in links.items() if target == key)
+            outgoing = sum(value for (source, _), value in links.items() if source == key)
+            sample = group[0]
+            groups.append(dict(
+                id=key, kind=name,
+                role=Counter(n['role'] for n in group).most_common(1)[0][0],
+                depth=sample['depth'] if name == 'depth_role' else None,
+                cluster_id=sample['cluster_id'] if name == 'cluster' and key != 'other' else None,
+                n_nodes=len(group), n_seed=sum(n['is_seed'] for n in group),
+                n_boundary=sum(n['boundary'] for n in group),
+                in_kzt=round(incoming, 2), out_kzt=round(outgoing, 2),
+                self_kzt=round(internal[key], 2), self_tx=internal_tx[key],
+                throughput=round(incoming + outgoing + internal[key], 2)))
+        groups.sort(key=lambda g: -g['throughput'])
+        modes[name] = dict(
+            groups=groups,
+            links=sorted((dict(src=source, dst=target, sum_kzt=round(value, 2), n_tx=link_tx[(source, target)])
+                          for (source, target), value in links.items()),
+                         key=lambda link: -link['sum_kzt']),
+            total_kzt=round(sum(links.values()) + sum(internal.values()), 2))
+    return modes
 
 def saved_analysis(out_dir: Path, revision: str) -> dict:
     manifest = json.loads((out_dir / 'run_manifest.json').read_bytes())
@@ -144,31 +205,12 @@ def validate_details(value: object) -> dict[str, str]:
     return dict(title=title, description=description)
 
 
-def parse_upload(content_type: str, body: bytes) -> dict[str, bytes]:
-    message = BytesParser(policy=policy.default).parsebytes(
-        f'Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n'.encode('ascii') + body)
-    if message.get_content_type() != 'multipart/form-data' or not message.is_multipart() or message.defects:
-        raise ValidationError('error.multipart')
-    files = {}
-    for part in message.iter_parts():
-        name = part.get_param('name', header='content-disposition')
-        if (part.defects or part.is_multipart() or part.get_content_disposition() != 'form-data'
-                or name not in INPUT_NAMES or name in files or part.get_filename() != f'{name}.parquet'):
-            raise ValidationError('error.exactFiles')
-        payload = part.get_payload(decode=True)
-        if not payload:
-            raise ValidationError('error.emptyFile', name=name)
-        files[name] = payload
-    if set(files) != set(INPUT_NAMES):
-        raise ValidationError('error.threeFiles')
-    return files
-
-
 class DashboardServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, result: Analysis | None, out_dir: Path, port: int, handler):
         self.out_dir = out_dir
+        self.reviews = ReviewService(out_dir)
         self.lock = threading.Lock()
         self.active = Snapshot.create(result, out_dir, 'startup') if result else None
         self.job = dict(state='idle', message=render(message('status.idle')), run_directory=None)
@@ -267,11 +309,11 @@ class DashboardServer(ThreadingHTTPServer):
                                     run_directory=str(destination.resolve()), elapsed_seconds=manifest['elapsed_seconds'])
         except ValidationError as error:
             self.fail(error)
-        except Exception:
-            # Do not leak raw data or filesystem details from parser/runtime errors.
-            self.fail(ValidationError('error.analysis'))
+        except Exception as error:
+            self.fail(analysis_failure(error))
 
     def server_close(self) -> None:
+        self.reviews.close()
         super().server_close()
         if self.worker:
             self.worker.join()
@@ -282,7 +324,10 @@ def make_server(result: Analysis | None, out_dir: Path, port: int = 8765) -> Das
     assets = {'/style.css': ('style.css', 'text/css'),
               '/theme.js': ('theme.js', 'text/javascript'),
               '/file-preview.js': ('file-preview.js', 'text/javascript'),
+              '/review.js': ('review.js', 'text/javascript'),
               '/app.js': ('app.js', 'text/javascript'), '/i18n.js': ('i18n.js', 'text/javascript'),
+              '/map.js': ('map.js', 'text/javascript'),
+              '/flows.js': ('flows.js', 'text/javascript'),
               **{f'/locales/{locale}.json': (f'locales/{locale}.json', 'application/json')
                  for locale in ('en', 'kk', 'ru')}}
 
@@ -318,6 +363,8 @@ def make_server(result: Analysis | None, out_dir: Path, port: int = 8765) -> Das
 
         def do_POST(self) -> None:
             if not self.local_request(mutation=True):
+                return
+            if handle_review(self, 'POST', self.path):
                 return
             editing = re.fullmatch(r'/api/analyses/(startup|[0-9a-f]{32})/details', self.path)
             if editing:
@@ -386,25 +433,31 @@ def make_server(result: Analysis | None, out_dir: Path, port: int = 8765) -> Das
                 self.error(409, 'error.busy')
                 return
             try:
-                self.connection.settimeout(30)
-                body = self.rfile.read(length)
-                if len(body) != length:
-                    raise ValidationError('error.interrupted')
-                files = parse_upload(self.headers.get('Content-Type', ''), body)
+                files = read_upload(self.rfile, self.connection, self.headers.get('Content-Type', ''), length)
             except (ValidationError, ValueError, OSError) as error:
                 failure = error if isinstance(error, ValidationError) else ValidationError('error.receive')
                 self.server.fail(failure)
-                self.error(400, failure.message['key'], **failure.message['params'])
+                self.close_connection = True
+                self.error(408 if failure.message['key'] == 'error.uploadTimeout' else 400,
+                           failure.message['key'], **failure.message['params'])
                 return
             self.server.progress('validating')
             self.server.worker = threading.Thread(target=self.server.analyze_upload, args=(files,), daemon=True)
-            self.server.worker.start()
+            try:
+                self.server.worker.start()
+            except RuntimeError:
+                self.server.worker = None
+                self.server.fail(ValidationError('error.workerStart'))
+                self.error(503, 'error.workerStart')
+                return
             self.send(202, json_bytes({'message': render(message('status.accepted'))}), 'application/json')
 
         def do_GET(self) -> None:
             if not self.local_request():
                 return
             url = urlsplit(self.path)
+            if not url.query and handle_review(self, 'GET', url.path):
+                return
             if url.path in {'/', '/analyses'} or re.fullmatch(r'/analyses/(startup|[0-9a-f]{32})', url.path):
                 # Root asset URLs support refresh/deep links without breaking file:// previews.
                 page = (static / 'index.html').read_bytes().replace(b' src="./', b' src="/').replace(b' href="./', b' href="/')
@@ -427,16 +480,20 @@ def make_server(result: Analysis | None, out_dir: Path, port: int = 8765) -> Das
                 return
             with self.server.lock:
                 snapshot = self.server.active
-            if url.path not in {'/api/overview', '/api/account', '/api/graph'} and not (
+            if url.path not in {'/api/overview', '/api/map', '/api/flows', '/api/account', '/api/graph'} and not (
                     url.path.startswith('/exports/') and url.path.removeprefix('/exports/') in [*SCHEMAS, 'run_manifest.json']):
                 self.error(404, 'error.notFound')
                 return
             if snapshot is None:
                 self.error(503, 'error.noAnalysis')
                 return
-            if url.path == '/api/overview':
+            if url.path == '/api/map':
+                self.send(200, snapshot.map_payload, 'application/json')
+            elif url.path == '/api/flows':
+                self.send(200, snapshot.flow_payload, 'application/json')
+            elif url.path == '/api/overview':
                 self.send(200, json_bytes(dict(revision=snapshot.revision, **{k: snapshot.data[k]
-                    for k in ['profile', 'config', 'warnings', 'clusters', 'top']})), 'application/json')
+                    for k in ['profile', 'config', 'warnings', 'clusters', 'top', 'methods', 'method_catalogs', 'rule_parameters'] if k in snapshot.data})), 'application/json')
             elif url.path in {'/api/account', '/api/graph'}:
                 query = parse_qs(url.query, keep_blank_values=True)
                 allowed = {'gid', 'revision', 'hops'} if url.path == '/api/graph' else {'gid', 'revision'}

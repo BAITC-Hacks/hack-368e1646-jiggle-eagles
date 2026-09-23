@@ -1,5 +1,6 @@
 """Deterministic, credential-free tests using hand-checkable synthetic motifs."""
 import csv
+import re
 from datetime import date
 import json
 from pathlib import Path
@@ -548,6 +549,48 @@ class HttpTests(unittest.TestCase):
                 finally:
                     server.shutdown()
                     thread.join()
+
+
+class StaticAssetTests(unittest.TestCase):
+    """The dashboard is inert unless index.html actually loads its behaviour scripts."""
+    STATIC = Path(__file__).resolve().parents[1] / 'money_graph' / 'static'
+
+    def scripts(self):
+        markup = (self.STATIC / 'index.html').read_text(encoding='utf-8')
+        return re.findall(r'<script\b([^>]*)>', markup)
+
+    def test_index_loads_the_dashboard_script(self):
+        """index.html must reach app.js, directly or through a script it loads.
+
+        A plain <script src="app.js"> would also be fetched when index.html is opened from disk,
+        which the file-preview journey forbids: that page must make no requests and show no
+        controls. So index.html loads file-preview.js, which injects app.js on the http origin
+        only. Either arrangement satisfies the guarantee this test exists for.
+        """
+        names = [re.search(r'src="([^"]+)"', tag).group(1).rsplit('/', 1)[-1] for tag in self.scripts()]
+        loaders = [name for name in names if (self.STATIC / name).is_file()]
+        reached = 'app.js' in names or any(
+            'app.js' in (self.STATIC / name).read_text(encoding='utf-8') for name in loaders)
+        self.assertTrue(reached,
+                        'index.html must load app.js itself or through a script it loads; without it '
+                        'the upload inputs, analyse button, search and language selector have no listeners.')
+
+    def test_referenced_scripts_exist(self):
+        for tag in self.scripts():
+            name = re.search(r'src="([^"]+)"', tag).group(1).rsplit('/', 1)[-1]
+            with self.subTest(script=name):
+                self.assertTrue((self.STATIC / name).is_file(), f'{name} is referenced but missing')
+
+    def test_module_scripts_declare_type_module(self):
+        for tag in self.scripts():
+            name = re.search(r'src="([^"]+)"', tag).group(1).rsplit('/', 1)[-1]
+            path = self.STATIC / name
+            if not path.is_file():
+                continue
+            uses_esm = re.search(r'^\s*(import|export)\s', path.read_text(encoding='utf-8'), re.M)
+            with self.subTest(script=name):
+                self.assertEqual(bool(uses_esm), 'type="module"' in tag,
+                                 f'{name} uses ES module syntax iff it is loaded as type="module"')
 
 
 if __name__ == '__main__':

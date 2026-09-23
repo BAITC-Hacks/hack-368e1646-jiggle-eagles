@@ -40,7 +40,7 @@ The CLI and browser uploads use the same calculation pipeline. An unsuccessful u
 
 The exact Python interpreter is defined by [`.python-version`](.python-version); runtime and test package pins are in [requirements-money-graph.txt](requirements-money-graph.txt) and [requirements-money-graph-test.txt](requirements-money-graph-test.txt). Node uses [`.nvmrc`](.nvmrc) and [package-lock.json](package-lock.json).
 
-**Money Graph uses no application AI model, external API, database, or cloud service.** Its explanations come from computed measurements and rules. The retained starter's opt-in OpenAI Responses API helper is separate, requires a caller-supplied model, and is not connected to Money Graph. Codex assistance during development is documented in [disclosures](disclosures/README.md).
+**Money Graph calculations run locally without AI, a database or a cloud service.** An optional investigation agent uses the OpenAI Responses API only when an analyst starts a review. Its tools retrieve saved measurements; model suggestions are hypotheses with validated evidence. The retained Node starter's opt-in OpenAI helper remains separate from the Python investigation agent. Codex assistance during development is documented in [disclosures](disclosures/README.md).
 
 ## Architecture
 
@@ -236,7 +236,7 @@ The organizer supplies a one-off batch export of **July 1–31, 2026 intra-bank 
 
 Working inputs/results use ignored `data/private/`. **Reference copies of all three Parquet files are tracked under [`docs/my-docs/data/`](docs/my-docs/data/)**; ignoring the working directory does not remove those copies or their history. Dataset use is authorized for the hackathon, not implicitly for redistribution. Setup preserves the reference files. There is no automatic demo fallback: the synthetic walkthrough creates its inputs explicitly.
 
-No bank API, live transaction stream, customer enrichment, external translation service, or application LLM participates in Money Graph. Its HTTP endpoints are local interfaces implemented in `server.py`:
+No bank API, live transaction stream, customer enrichment or external translation service participates in Money Graph. The optional investigation agent sends selected graph evidence to OpenAI only after a review is started; calculations and manual exploration require no key. Its HTTP endpoints are local interfaces implemented in `server.py`:
 
 | Local interface | Purpose |
 | --- | --- |
@@ -247,6 +247,35 @@ No bank API, live transaction stream, customer enrichment, external translation 
 | `GET /exports/<filename>` | Download the selected analysis's three CSVs or run manifest |
 
 Mutation routes enforce local same-origin requests. The server binds to `127.0.0.1`; these interfaces are not a hosted public API.
+
+## Optional investigation agent
+
+Inside **Analyses → Analysis details**, choose **Review whole graph**. Python scans every supplied account for shared recipients, directed connections between communities and repeated connections across dates. A bounded, diverse shortlist is investigated with read-only tools. The interface separately reports accounts scanned, candidates found and candidates examined; a partial review does not imply the remaining graph is clear.
+
+Select a suggestion to focus its accounts and open **Findings, Checks and Evidence**. Closing the investigation restores your prior graph and zoom. **Mark for follow-up** persists a marker; **Prepare brief** opens a dialog and saves the validated suggestion, evidence, checks and original method provenance with the analysis. Search and manual exploration remain available.
+
+Put `OPENAI_API_KEY` in the ignored root `.env` file or export it in the server's environment. Never put a real key in `.env.example`. Money Graph reads these backend settings; the key is never returned to the browser. Default model: `gpt-5.4-2026-03-05`, medium reasoning. No paid startup, health or normal test calls are made. The existing Node helper is independent.
+
+```dotenv
+# Store an actual key only in .env (ignored by Git).
+OPENAI_API_KEY=your-key-here
+OPENAI_MODEL=gpt-5.4-2026-03-05
+MONEY_GRAPH_AI_MAX_USD=0.75
+MONEY_GRAPH_AI_INPUT_USD_PER_MILLION=2.50
+MONEY_GRAPH_AI_OUTPUT_USD_PER_MILLION=15.00
+```
+
+Default limits are six shortlisted candidates, 36 tool calls, 40 model calls, 250,000 cumulative tokens, 6,000 output tokens per request, 180 seconds and $0.75 per review. Before each request, the backend reserves a conservative input/output cost against the configured prices. Unknown model overrides require explicit prices. Estimates charge cached input at the full input rate; provider billing remains authoritative. A request whose response is lost retains an explicit uncertain cost reservation and is never automatically retried. Cancellation stops further work, preserves accepted findings, and ignores late suggestions; an already transmitted request can still incur usage. An interrupted review is recorded on server restart. One AI review runs at a time.
+
+Reviews, snapshot copies and briefs are stored in `<out>/investigations/`, separate from the required CSVs and manifest. Tools resolve the review's saved snapshot, independently of the analysis selected in another tab. Compatible completed reviews can be reused; calculation, discovery, tool, prompt, model, locale or budget changes invalidate reuse. New analyses are required to calculate new algorithms or add daily evidence to legacy results. Old briefs retain their original evidence.
+
+Run paid evaluation explicitly on **generated synthetic data only**:
+
+```bash
+.venv/bin/python -u scripts/evaluate-investigation.py --live --budget-usd 1
+```
+
+The report at `data/private/money-graph/evaluation.json` records tool choices, validated decisions, rejected structured outputs, latency, usage, a deterministic candidate baseline and a human-review rubric. The two cases contrast observed onward activity with collection-boundary absence. This is a small live integration evaluation, not an AML accuracy benchmark. Mocked tests establish contracts and lifecycle behavior, not model quality. [Investigation contract](docs/money-graph/investigation.md) documents modules and acceptance criteria; the [implementation and live-evaluation disclosure](disclosures/investigation-agent-17-43.md) records the observed results and remaining limits.
 
 ## Outputs
 
@@ -262,7 +291,7 @@ There is one role row per supplied node, including isolates, and up to 50 ranked
 
 CSV encoding is UTF-8 with LF endings. Gids remain exact decimal int64 values; import the ID column as text in spreadsheet tools to avoid their precision limits. Scores and amounts serialize to six decimals. `top_gids` is a JSON array of up to five exact decimal **strings**, ordered by priority then numeric gid. Cluster IDs start at zero. Nodes sort by numeric gid; ranks sort by descending six-decimal priority then ascending numeric gid.
 
-`dashboard.json` contains the same results plus measured features and directed links, using **strings** for identifiers across browser/JSON boundaries. `run_manifest.json` records input/output SHA-256 hashes, algorithm parameters, dependency/Python versions, platform, start time and elapsed processing time. CSVs and dashboard JSON are deterministic; the manifest's timing fields intentionally vary.
+`dashboard.json` contains the same results plus measured features, directed links, daily directed aggregates, actual method settings and frozen method descriptions, using **strings** for identifiers across browser/JSON boundaries. New calculation snapshots retain their original descriptions when algorithms or translations change. Older snapshots remain readable with explicit missing temporal/method capabilities. `run_manifest.json` records input/output SHA-256 hashes, algorithm parameters, dependency/Python versions, platform, start time and elapsed processing time. CSVs and dashboard JSON are deterministic; the manifest's timing fields intentionally vary.
 
 ## Rules and scores
 
@@ -334,7 +363,7 @@ MONEY_GRAPH_TEST_DATA=docs/my-docs/data \
 
 Coverage includes deterministic outputs, all-node preservation, role/priority formulas, collection-boundary handling, upload failures preserving active results, saved-analysis reopening/editing, precise-ID search, bounded graph exploration, exports, localization, themes, and narrow layouts. No paid or live AI request is part of these checks.
 
-[GitHub Actions](.github/workflows/jiggles-ci.yml) defines separate Python/browser and legacy Node jobs. A workflow file does not establish a successful remote run. See [verification limits](disclosures/verification-limits-16-08.md) for the recorded local checks and remaining gaps; remote CI for the current uncommitted changes, independent second-machine setup, Docker execution, and the live organizer presentation remain unverified.
+[GitHub Actions](.github/workflows/jiggles-ci.yml) defines separate Python/browser and legacy Node jobs. A workflow file does not establish a successful remote run. See the [current investigation verification](disclosures/investigation-agent-17-43.md) and [earlier verification limits](disclosures/verification-limits-16-08.md) for local checks, the unrelated unfinished security-test failure, and remaining gaps. Remote CI for the current uncommitted changes, independent second-machine setup, Docker execution, and the live organizer presentation remain unverified.
 
 ## Limitations and next scale
 
@@ -342,7 +371,7 @@ Coverage includes deterministic outputs, all-node preservation, role/priority fo
 - **Heuristic inference:** there are no labeled correct roles. Confidence is not a calibrated probability, communities are not verified organizations, and tests do not establish AML detection accuracy. Threshold sensitivity and partition robustness have not been measured.
 - **Fixed data contract:** validation currently enforces July 2026 dates, the 5,000 KZT threshold, and the documented depth/schema rules. This is not a general-purpose import format or live banking integration.
 - **Local operation:** one analysis runs at a time, uploads are capped at 64 MiB, and graph views show at most 50 accounts. There is no authentication, multi-user access control, database, production hosting, or verified Money Graph container. Saved selection is shared across browser tabs.
-- **Deferred capabilities:** dedicated cluster browsing, advanced filters, transaction viewing, temporal matching, cycle analysis, node-removal simulation, AI chat, and full-network force-layout visualization are not implemented. Active days and dates are descriptive only.
+- **Deferred capabilities:** advanced manual filters, a raw transaction viewer, cycle analysis, node-removal simulation, chat, and full-network force-layout visualization are not implemented. The investigation agent can inspect communities, daily aggregates and repeated directed connections; it cannot establish intraday order or fund lineage.
 - **Translation review:** EN/KZ/RU catalogs are present; independent native-speaker review is still needed.
 
 At approximately **one million nodes**, the current in-memory pandas/NetworkX approach would need redesign: columnar scans, compact on-disk graph storage, indexed neighborhoods, and partitioned or approximate algorithms. Results should be served in bounded pages without loading the whole graph into browser memory. Community stability, scoring thresholds, runtime, and memory would need measurement on representative large data. These are proposed changes, not implemented scale claims.
@@ -371,7 +400,7 @@ npm run build
 npm start
 ```
 
-`npm start` serves the existing production build through Express. The optional server-only OpenAI helper in `backend/src/openai.ts` uses the Responses API with `OPENAI_API_KEY` and `OPENAI_MODEL`; no model is selected in the repository defaults. It is not wired into the health/echo routes or Money Graph. Its tests mock transport, so they do not demonstrate live-model readiness. There is no configured Node lint or Node browser-test command.
+`npm start` serves the existing production build through Express. The optional server-only OpenAI helper in `backend/src/openai.ts` uses the Responses API with `OPENAI_API_KEY` and `OPENAI_MODEL`; that helper requires explicitly exported settings. It is not wired into the health/echo routes or Money Graph. Its tests mock transport, so they do not demonstrate live-model readiness. There is no configured Node lint or Node browser-test command.
 
 ## Sources and attribution
 

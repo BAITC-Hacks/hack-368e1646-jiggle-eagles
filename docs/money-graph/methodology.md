@@ -25,7 +25,7 @@ Cluster descriptions give member count, internal directed edge count, role compo
 - All depth-four accounts carry a boundary caveat; none is labeled terminal.
 - Incoming flows outside the sample are missing, especially for seeds. Undefined ratios stay undefined; values above one are not clamped. Observed sums are not balances, retained wealth or confirmed fund lineage.
 - Only July 2026 intra-bank transfers of at least 5,000 KZT are observed. Smaller transfers and external-bank activity are unknown.
-- No invented customer attributes or external enrichment. No model training, application LLM or paid/cloud service participates in reproduction.
+- No invented customer attributes or external enrichment. No model training or paid/cloud service participates in core reproduction. The optional investigation agent runs separately against immutable saved evidence.
 
 Correctness, coverage, deterministic outputs and browser behavior are tested. AML accuracy, threshold sensitivity and partition robustness remain unmeasured without independent investigation or ground truth.
 
@@ -34,3 +34,11 @@ Correctness, coverage, deterministic outputs and browser behavior are tested. AM
 Graph distance counts connections in either direction, independently of transfer direction and original collection depth. Breadth-first neighborhoods stop at one or two hops. At most 50 accounts are selected by distance then numeric gid, including the center. Every edge in the induced directed subgraph is displayed, including self/reciprocal links. Eligible and omitted counts make truncation explicit; it never removes accounts from calculations or exports.
 
 Uploads run the same validation, analysis and export pipeline as the CLI, in separate local directories. A complete result snapshot and downloadable CSV/manifest bytes are published together after successful processing. Failed input or runtime errors leave the active snapshot intact. Successful upload inputs and outputs are retained for deterministic reproduction; the original startup output is preserved.
+
+## Versioned investigation evidence
+
+`money_graph/methods.py` is the source of calculation thresholds, weights and method settings. `analyze(..., config=...)` and `run(..., config=...)` accept validated overrides. The supported replacement method `connected_components` operates on the same undirected projection; original directed flows remain intact. Method parameters, rendered rule templates, descriptions, daily src→dst/date KZT sums and counts are saved in schema-version-two dashboard artifacts. Older snapshots use their saved explanations and contributions instead of current rules; unavailable daily evidence is explicit.
+
+Discovery in `investigation/discovery.py` independently scans all nodes. Shared recipients require at least three distinct incoming peers; repeated connections require at least two distinct dates; community candidates aggregate observed directed cross-community connections. These configurable discovery criteria are investigative leads, not calibrated anomaly scores. Candidate order interleaves pattern/component groups with measured strength and deterministic ties. Counts distinguish all accounts scanned, candidates found, selected and explicitly examined through a validated decision.
+
+Agent findings reference retrieved measurement records with exact entities, values and units. Numeric claims must use structured findings; prose remains a hypothesis whose semantic support must be evaluated. Account inspection, onward-connection checks and daily-activity availability checks are required before a candidate decision. The model may choose additional checks; after a bounded amount of follow-up it must save a decision so partial reviews retain useful findings. This requirement does not imply sufficient evidence for a positive suggestion.

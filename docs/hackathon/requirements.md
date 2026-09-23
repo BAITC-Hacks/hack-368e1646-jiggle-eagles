@@ -44,7 +44,7 @@ Acceptance procedures below operationalize U/S; they are not additional organize
 | MG-V2-03 | Improved community descriptions with measured fan-in, fan-out or bridging patterns, numbers and caveats. | `pipeline.py:cluster_description`; independently specified motifs/counts/examples, explicit no-pattern fallback, collection caveats in every description. Calculation tests cover fan-in, fan-out, bridging and isolates; existing role/priority formulas remain unchanged. |
 | MG-V2-04 | Extend browser acceptance and preserve existing invariants/reproducibility/runtime. | `tests/browser_money_graph.py` runs real local Python HTTP + Chromium with synthetic uploads; existing supplied-data journey remains available. Python tests verify official schemas, precise IDs, complete node coverage and deterministic artifacts; supplied-data repeat runs verify unchanged scoring and <300s processing. |
 
-Dedicated cluster browsing, advanced filters and a transaction viewer are explicitly deferred. No LLM, training, database, authentication or cloud services are introduced.
+Dedicated cluster browsing, advanced filters and a transaction viewer remain deferred. This original v2 stage introduced no LLM, training, database, authentication or cloud services; the optional investigation integration is defined in MG-AG below.
 
 ## Localization acceptance
 
@@ -94,6 +94,20 @@ Minimum role dictionary: `consolidator`, `transit`, `distributor`, `terminal`, `
 
 - The actual data contract, archive/starter hashes, float tolerance and component reconciliation are in [data profile](data-profile.md).
 - The [README](../../README.md) documents adopted rules, confidence, priority, deterministic ordering, exact-ID CSV/JSON serialization and community parameters. Requirements files pin runtime/test versions; [disclosures](../../disclosures/README.md) identify sources and licenses.
-- The user requested a small local version: no application LLM, model training, database, authentication or cloud dependency. Optional temporal matching, cycle analysis and sensitivity checks are not implemented.
+- Core reproduction remains local without model training, a database, authentication or cloud dependency. The later approved MG-AG plan adds optional AI investigation and repeated daily connections; cycle analysis and sensitivity analysis remain deferred.
 - Local completeness, runtime, deterministic output and browser behavior are verified; role accuracy is unmeasured because ground truth is absent. A separate-machine setup rehearsal, remote CI and the live organizer presentation remain unperformed.
 - The user/team captain retains ownership of reviewer data access, current event rules and submission. Working inputs/results use ignored `data/private/`; existing reference Parquet copies under `docs/my-docs/data/` are tracked and were preserved. No push, additional redistribution or public hosting is part of this setup change.
+
+## Optional investigation agent (user-approved plan, September 23, 2026)
+
+| ID | Confirmed behavior | Implementation and acceptance |
+| --- | --- | --- |
+| MG-AG-01 | Stable analysis contracts with actual parameters, units, evidence and preserved historical methods. | `methods.py`, `pipeline.py`, `investigation/evidence.py`; daily directed sums, frozen method templates, input/output hashes and snapshot identities. Threshold/community replacement and saved-reopen regressions in `test_investigation.py`. |
+| MG-AG-02 | Graph-wide discovery across patterns/components, separate scanned/found/examined counts. | `discovery.py`; shared recipients, directed community connections, repeated dates; synthetic expected sums and diverse components, full-node coverage including isolates. |
+| MG-AG-03 | Small versioned tools independent of display limits. | `tools.py`, `contracts.py`; context/candidates/account/community/connections/daily/evidence/record-decision schemas, exact IDs, pagination, omitted counts, frozen scope and evidence validation. Tests retrieve all 77 incoming connections across pages. |
+| MG-AG-04 | Adaptive Responses investigation with supported suggestions or insufficient evidence. | `agent.py`, `provider.py`; strict function calling and final output schema, minimum follow-ups, bounded additional checks, incremental decisions, runtime reference/measurement validation. Mocked and separately invoked synthetic live evaluation cover different boundary/onward cases. |
+| MG-AG-05 | Details-page review, suggestion focus/restore, Findings/Checks/Evidence, follow-up and saved brief dialog. | `review.js` and existing dashboard callbacks; real browser journey tests all actions, graph/zoom restoration, locales/themes and reopening after restart. |
+| MG-AG-06 | Persistent reviews/briefs, compatible reuse, correct analysis attachment, limits, cancellation and failures. | `service.py`, `storage.py`, `routes.py`; atomic checksum-wrapped records outside calculation exports, fixed snapshot tool access, model/prompt/tool/discovery/locale/budget provenance, usage reservations and terminal cancellation. HTTP/lifecycle/browser tests cover analysis switching, late replies, restart and old brief evidence. |
+| MG-AG-07 | Evidence-quality/adaptability checks and separate live evaluation. | `test_investigation.py`, expanded `browser_money_graph.py`, `scripts/evaluate-investigation.py`; fabricated references/values/units rejected, partial coverage/budgets/failures tested, parameter/method replacement preserves old evidence. Live results and their limitations are recorded in the investigation disclosure, not inferred from mocked success. |
+
+MG-V2-01/04, MG-I18N-01 and ENG-01 additionally gain bounded upload reads, explicit failure categories, resilient status polling and synthetic HTTP/browser fault injection in `uploads.py`, `test_upload_reliability.py` and `browser_upload_reliability.py`. Core calculations and mandatory exports remain independent of optional AI. Earlier no-LLM notes describe their original implementation stages; MG-AG introduces the explicitly optional investigation integration.
