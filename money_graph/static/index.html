@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Money Graph · Local investigation</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<body>
+<header><div><p class="eyebrow">HACKALEM / FINANCE</p><h1>Money Graph<span class="local">LOCAL</span></h1><p class="subtitle">Follow the transfers. Examine the evidence.</p></div><div class="period">OBSERVATION WINDOW<strong>01–31 July 2026</strong><span>Intra-bank · ≥ 5,000 KZT</span></div></header>
+<main>
+<section class="notice" aria-label="Interpretation limits"><strong>Hypotheses for investigation, never accusations.</strong> Observed flows are not complete balances. Incoming funds outside the sample, other banks and transfers below 5,000 KZT are absent. Depth-four accounts may have unobserved onward transfers.</section>
+<div id="summary" class="summary" aria-live="polite">Loading validated data…</div>
+<div class="workspace">
+<aside class="panel"><div class="section-heading"><h2>Review queue</h2><span id="queue-count"></span></div><p class="muted">Ranked by observed structure and activity.</p><div id="queue" class="queue"></div><div class="downloads"><h3>Reproducible exports</h3><a href="/exports/nodes_roles.csv" download>nodes_roles.csv ↗</a><a href="/exports/clusters.csv" download>clusters.csv ↗</a><a href="/exports/top_nodes.csv" download>top_nodes.csv ↗</a></div></aside>
+<section class="investigation">
+<form id="search-form" class="panel search"><label for="gid">Find a client ID<input id="gid" name="gid" autocomplete="off" placeholder="Enter exact client ID" required maxlength="20"></label><button type="submit">Inspect account →</button></form>
+<p id="error" class="error" role="alert" hidden></p>
+<div id="account-area" hidden>
+<section class="panel account"><div class="section-heading"><div><p class="eyebrow">ACCOUNT HYPOTHESIS</p><h2 id="account-id"></h2></div><span id="role-badge" class="badge"></span></div><p id="account-warning" class="warning"></p><div id="metrics" class="metrics"></div><p id="rule"></p><p id="evidence" class="muted"></p><details><summary>How confidence and priority were calculated</summary><div id="scoring"></div></details></section>
+<section class="panel network"><div class="section-heading"><div><h2>Directed connections</h2><p class="muted">Arrows follow payer → recipient. Click a node to continue.</p></div><label class="color-label" for="color-mode">Color by<select id="color-mode"><option value="role">Role</option><option value="cluster">Cluster</option></select></label></div><div id="legend" class="legend"></div><svg id="graph" viewBox="0 0 920 560" role="group" aria-label="Directed account neighborhood"></svg><div class="pager"><button id="previous" type="button">← Previous</button><span id="graph-caption" aria-live="polite"></span><button id="next" type="button">Next →</button></div><p class="muted">Shows this account’s incident links; links among neighbors are outside this view.</p><details><summary id="connections-summary">All observed connections</summary><div class="table-scroll"><table><thead><tr><th>Payer → recipient</th><th>Observed KZT</th><th>Transfers</th></tr></thead><tbody id="connections"></tbody></table></div></details></section>
+<section class="panel"><h2 id="cluster-title">Community</h2><p id="cluster-description"></p><div id="cluster-peers" class="peer-links"></div><p class="muted">Weighted Louvain · seed 42 · undirected projection for grouping only. Original transfer directions remain visible.</p></section>
+</div>
+</section>
+</div>
+<footer>Local analysis only · No customer enrichment · Scores are heuristics, not probabilities</footer>
+</main>
+</body></html>

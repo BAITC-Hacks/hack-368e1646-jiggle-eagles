@@ -1,168 +1,165 @@
 # Money Graph — HackAlem AI
 
-**Track:** Finance · **Task owner:** Freedom · **Team:** Jiggle Eagles
+A small, local AML investigation dashboard for the **Freedom / Finance** task, by **Jiggle Eagles**. Python, pandas and NetworkX turn the organizer's three Parquet files into explainable role hypotheses, communities and a review queue. Findings are **hypotheses for human investigation, never accusations**.
 
-Organizer repository: `hack-368e1646-jiggle-eagles`.
+The first version works end to end: validation, all-node directed graph, six role rules, reproducible communities, three official CSVs, client-ID search, directed connections and account explanations. It has no application LLM, training, database, authentication or cloud dependency. The existing Node/React connectivity starter is retained separately; it is not needed to run Money Graph.
 
-Official title: **«Граф денег: восстановление финансовой структуры организованной группы по транзакционной сети»**.
+## Setup
 
-An investigation tool for a bank's anti-money-laundering analyst: reconstruct transfer networks, propose participant roles, group related accounts and explain which accounts to investigate first. All findings must be hypotheses for review, never accusations.
-
-**Current status:** project preparation and a working frontend/API connection check. The Parquet pipeline, graph analysis, CSV exports, ranking, search and network visualization are **not implemented**. The architecture is a proposed design. Running this starter does not produce the required investigation results.
-
-## Task and deliverables
-
-The supplied dataset describes July 2026: **2,248 nodes, 3,119 directed connections and 4,840 transactions**, traced outward from **81 seed clients** through four hops. Inputs are `nodes.parquet`, `edges.parquet` and `transactions.parquet`. These are organizer-reported figures; the actual archive has not been profiled here.
-
-- One reproducible local run from raw Parquet to all three CSVs in **under five minutes**.
-- An explainable role, role confidence, cluster and investigation priority for every node.
-- Cluster structure summaries and at least 20 ranked priority nodes with explanations.
-- A network view with transfer directions, roles, clusters and search by client `gid`.
-- Source code, this README, `nodes_roles.csv`, `clusters.csv`, `top_nodes.csv`, an architecture diagram and a five-minute live demo covering 2–3 nodes.
-
-Required role keys: `consolidator`, `transit`, `distributor`, `terminal`, `coordinator`, `peripheral`. Exact output schemas and acceptance checks are in [requirements](docs/hackathon/requirements.md). Formal role thresholds and priority rules must be implemented and documented before submission; [methodology](docs/money-graph/methodology.md) records the design constraints, not completed scoring rules.
-
-The fourth-hop boundary can hide outgoing activity. Transfers below **5,000 KZT**, external-bank transfers and incoming flows outside the sampled network are absent. Observed inflows/outflows are not full balances, and seed membership is not proof of a role or wrongdoing. No customer attributes may be invented or externally enriched. Core reproduction must work locally without cloud clusters, GPU training or paid services; a graph-grounded AI assistant is optional.
-
-## Sources and project guide
-
-- [Full technical specification](https://docs.google.com/document/d/1JPLU-G6R25Ge2hVaY2J9cqvrx7FGExj87XKwJPaMz3o/edit?usp=sharing) and [dataset README](https://drive.google.com/file/d/1ro-SiY042jv7De0h7tXBDyY8ZKdHz_US/view?usp=sharing), read September 23, 2026.
-- [Dataset archive](https://drive.google.com/file/d/1yHdWaSb6gwPAUrqco-KrwR2U_YhzFQFT/view?usp=sharing) and [organizer starter](https://drive.google.com/file/d/1EnMGG22jSH7Mvgt396kKRi3bjAobsomN/view?usp=sharing), not yet inspected or incorporated.
-- [Task requirements](docs/hackathon/requirements.md), [data contract](docs/hackathon/data-profile.md), [proposed architecture](docs/money-graph/architecture.md), [implementation plan](docs/hackathon/execution-plan.md) and [demo checklist](docs/hackathon/submission-checklist.md).
-- [All organizer resources](docs/hackathon/orientation.md), [agent agreement](AGENTS.md) and [development disclosures](DISCLOSURES.md).
-
-Keep authorized input files and generated investigation outputs under ignored `data/private/money-graph/`. The dataset is supplied for hackathon use; do not bundle it into public source or Docker images. A pipeline command and clean-machine data-access procedure remain to be implemented and verified.
-
-## Scaling to about one million nodes
-
-This is a design discussion, not a benchmark. At that size, use columnar input scans, compact graph storage and batch processing; bound or approximate expensive all-pairs/centrality work and record approximation parameters. Serve indexed node details and bounded neighborhoods instead of sending the entire graph to the browser. Reassess memory, runtime, cluster stability and ranking quality on representative data; the five-minute target on the supplied dataset does not establish performance at this scale.
-
-## Development starter
-
-A minimal connectivity test: React + Vite + TypeScript + Tailwind in `frontend/`, Node.js + Express + TypeScript + Zod in `backend/`. See [DISCLOSURES.md](DISCLOSURES.md) for sources and AI assistance.
-
-### Launch locally
-
-Prerequisites: Bash, the Node.js version pinned in [`.nvmrc`](.nvmrc) with its bundled npm, and internet access for the first dependency install. `.nvmrc` is the single source of truth for the toolchain. Use your existing Node version manager if needed (`nvm install && nvm use` from this repository). The launchers never install system software.
-
-From the repository root:
+Use Python **3.12+** (verified with 3.14.6), Bash and the repository root. Dependencies are pinned in [requirements-money-graph.txt](requirements-money-graph.txt); installation needs internet, analysis does not.
 
 ```bash
-nvm install   # once: installs the version pinned in .nvmrc
-nvm use       # activates the version pinned in .nvmrc
-./scripts/start.sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-money-graph.txt
 ```
 
-Or from **any** working directory:
+Obtain the authorized [organizer dataset archive](https://drive.google.com/file/d/1yHdWaSb6gwPAUrqco-KrwR2U_YhzFQFT/view?usp=sharing). Extract **only** its `data/nodes.parquet`, `data/edges.parquet` and `data/transactions.parquet` into:
 
-```bash
-/absolute/path/to/this-repository/scripts/start.sh
+```text
+data/private/money-graph/input/
+  nodes.parquet
+  edges.parquet
+  transactions.parquet
 ```
 
-The script checks Node/npm, creates `.env` only when missing, runs `npm ci --include=dev --no-audit --no-fund` and `npm run build`, then starts Express with `NODE_ENV=production`. Open **http://localhost:3000** and send `Hello, Money Graph!` in the connection check. The page should display it under “API response.” Express serves both the built frontend and `/api` at this URL. Press **Ctrl+C** to stop. Startup requires no AI credentials or AI service access.
+For this working copy the inputs have already been retrieved and verified. Inputs, source archives and account-level results stay in ignored `data/private/`; they are not bundled in Git or the existing Docker image. Reviewers need organizer-authorized access to the same archive. [Data contract and hashes](docs/hackathon/data-profile.md) identify the verified files. There is no implicit demo-data fallback.
 
-### Launch with Docker
-
-Prerequisites: Bash and a running Docker engine (no host Node/npm required).
+## One-command reproduction and dashboard
 
 ```bash
-./scripts/start-docker.sh
-# Optional alternative host port:
-DOCKER_PORT=8080 ./scripts/start-docker.sh
+./scripts/money-graph.sh --serve
 ```
 
-An absolute path to the script also works from any directory. It creates `.env` only if missing, builds `hackalem:local`, and runs it in the foreground with `--rm` and an init process. Open **http://localhost:3000** (or your `DOCKER_PORT`). Ctrl+C stops and removes this container. Runtime configuration comes from `.env`; Docker always listens on port 3000 inside the container and publishes only to host loopback. No Compose file is needed.
-
-The launcher reads the Node.js version from `.nvmrc` and passes it as a build argument to all stages of the image, which runs as the non-root `node` user. Its build context allows only exact app build inputs and excludes `.env` and key files. Runtime configuration stays out of build arguments. Add each new source file or asset explicitly to `.dockerignore` when needed by the build. The OpenAI helper is included; the optional TypeScript connectivity CLI is a native development command and is not shipped in the runtime image. Keep credentials out of source code; the connectivity app needs none.
-
-Docker build/run remains unverified because the local daemon is unavailable. After starting your Docker engine, `docker info` must succeed before using the launcher.
-
-### Development and commands
+This validates raw Parquet, recomputes every result, writes the exports and serves **http://127.0.0.1:8765**. Ctrl+C stops the server. No Node build or network access is required. To produce outputs and exit, omit `--serve`:
 
 ```bash
-# With the pinned Node version active, from the repository root:
-npm ci
-npm run dev        # page: http://localhost:5173; API: http://localhost:3000
+./scripts/money-graph.sh
+# Explicit locations or an alternative local port:
+./scripts/money-graph.sh --data /path/to/parquet --out data/private/money-graph/output --serve --port 8766
+```
+
+The same command is available as `.venv/bin/python -m money_graph`. Inputs are never modified. Validation failures exit nonzero before replacing existing results. A failed run leaves the **previous** exports intact; use the successful run manifest to identify their inputs. Avoid concurrent writers to the same output directory.
+
+The dashboard opens the highest-priority account. Search any exact decimal client ID, including isolates. Inspect measured flows, role confidence, the matched rule, priority contributions, community description and neighboring accounts. Switch coloring between role and community. Arrows point **payer → recipient**. Graph pages show 16 peers at a time with visible totals; “All observed directed connections” lists every incident edge. Click a node or ID to continue tracing. Links among neighbors are outside this one-account view. Dashed nodes mark depth four. Community colors repeat; explicit community IDs distinguish them.
+
+## Outputs
+
+Default directory: `data/private/money-graph/output/`.
+
+| File | Exact required columns |
+| --- | --- |
+| `nodes_roles.csv` | `gid,role,role_score,cluster_id,priority_score,evidence` |
+| `clusters.csv` | `cluster_id,n_nodes,n_seed,sum_kzt_internal,top_gids,hypothesis` |
+| `top_nodes.csv` | `rank,gid,role,priority_score,why` |
+
+There is one role row per supplied node, including isolates, and up to 50 ranked accounts (all accounts for smaller fixtures). The official dataset produces 50, exceeding the minimum 20. Evidence is nonempty and at most 200 characters. Scores are finite in [0,1].
+
+CSV encoding is UTF-8 with LF endings. Gids remain exact decimal int64 values; import the ID column as text in spreadsheet tools to avoid their precision limits. Scores and amounts serialize to six decimals. `top_gids` is a JSON array of up to five exact decimal **strings**, ordered by priority then numeric gid. Cluster IDs start at zero. Nodes sort by numeric gid; ranks sort by descending six-decimal priority then ascending numeric gid.
+
+`dashboard.json` contains the same results plus measured features and directed links, using **strings** for identifiers across browser/JSON boundaries. `run_manifest.json` records input/output SHA-256 hashes, algorithm parameters, dependency/Python versions, platform, start time and elapsed processing time. CSVs and dashboard JSON are deterministic; the manifest's timing fields intentionally vary.
+
+## Rules and scores
+
+Let `I` and `O` be distinct incoming and outgoing **other clients**, `K` the number of distinct communities among all neighbors, and `R = observed outgoing KZT / observed incoming KZT`. `R` is undefined when incoming KZT is zero; ratios above one remain above one. They do not establish retention, fund lineage or balances. Seed membership adds no priority.
+
+All qualifying rules are evaluated:
+
+| Role hypothesis | Eligibility | Base confidence |
+| --- | --- | --- |
+| `consolidator` | `I ≥ 3` and `I ≥ 2O` | `0.55 + 0.35 × min(I/10, 1)` |
+| `distributor` | `O ≥ 5` and `O ≥ 2I` | `0.55 + 0.35 × min(O/20, 1)` |
+| `coordinator` | `I ≥ 2`, `O ≥ 2`, `K ≥ 3` | `0.55 + 0.35 × min(K/6, 1)` |
+| `transit` | Non-seed; `I,O > 0`; `0.8 ≤ R ≤ 1.2` | `0.55 + 0.35 × (1 − abs(R−1)/0.2)` |
+| `terminal` | Non-seed; depth <4; `I > 0`, `O = 0` | `0.45 + 0.15 × min(I/5, 1)` |
+| `peripheral` | No other rule qualifies | `0.10` with no other peers, otherwise `0.20` |
+
+The highest base confidence wins. Exact six-decimal ties resolve in order: coordinator, consolidator, distributor, transit, terminal, peripheral. Subtract 0.10 if multiple rules match, then multiply by 0.60 at depth four and by 0.85 for seeds. The dashboard lists competing rules. A depth-four account can be a consolidator based on observed fan-in, but **cannot receive the terminal role**. Even below depth four, `terminal` means a candidate endpoint in this partial observation only.
+
+Confidence is heuristic support for a structural role, not a calibrated probability. Thresholds are transparent first-version choices, not learned or tuned to labeled truth. The peripheral score describes weak evidence, not innocence or guilt.
+
+Investigation priority is independent of the selected role. Let `B` count distinct peers in other communities, `T = in_tx + out_tx`, `V = in_kzt + out_kzt`, and `Vmax` be the maximum `V` in this dataset:
+
+```text
+priority = 0.30 × min(I/10, 1)
+         + 0.25 × min(O/10, 1)
+         + 0.20 × min(B/5, 1)
+         + 0.15 × min(T/30, 1)
+         + 0.10 × log(1+V) / log(1+Vmax)
+```
+
+The last term is zero for an edgeless dataset. Each contribution is rounded to six decimals before summing; ties use exact numeric gid. High amounts alone contribute at most 0.10. `V` is incident activity, not unique money; self-transfers contribute to both incoming and outgoing totals/counts, but not distinct other peers. Daily activity counts are descriptive only; there is no inferred intraday order.
+
+## Validation and communities
+
+Required columns, integer IDs, nulls, seed/depth consistency, endpoint membership, duplicate gids/pairs, positive transaction counts, finite KZT amounts, the 5,000 KZT threshold and July day-level dates are checked. Transactions must match every directed edge's count and aggregate amount, within `0.01 KZT + 1e-12 × transaction sum`. Float64 source amounts retain their precision; this is not a financial ledger. Repeated transaction rows are retained. Edge aggregates are the single source for graph amounts after reconciliation, so transactions are not counted again as extra turnover.
+
+All nodes are inserted before edges. Community detection uses NetworkX weighted Louvain on an **undirected projection**, adding reciprocal KZT weights and excluding self-links only from community affinity. Parameters: seed 42, resolution 1.0, threshold 1e-7. Node/edge insertion is sorted. Isolates get singleton communities. Communities are numbered by their smallest exact numeric gid. This is reproducibility for the pinned environment, not a claim that alternative thresholds or algorithms yield the same partition.
+
+Cluster summaries report size, seeds, role composition, internal directed links and boundary membership. Internal KZT counts each directed transfer once when both endpoints share the cluster. Algorithmic communities are not verified organizations. More details: [methodology](docs/money-graph/methodology.md).
+
+## Verification
+
+The supplied data produced **2,248 accounts, 3,119 edges, 4,840 transactions, 19 isolates, 88 communities and 50 ranked accounts**. Two local runs took approximately **0.3 seconds each** for input hashing, parsing, validation, analysis and export on macOS arm64 / Python 3.14.6. Dependency installation and serving are excluded. This is well below five minutes on this machine, not a cross-machine performance guarantee.
+
+Verified: exact official schemas and gid coverage; scores and evidence constraints; cluster member/seed counts and internal amounts; ranking order; all 444 boundary nodes excluded from terminal; byte-identical CSV and dashboard JSON across repeated runs; shuffled-input invariance on fixtures. Detailed local evidence is in ignored `data/private/money-graph/verification.json` and each run manifest.
+
+```bash
+# Synthetic calculation, validation, export/reproducibility and real HTTP tests:
+.venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
+
+# One-time browser-test setup:
+.venv/bin/python -m pip install -r requirements-money-graph-test.txt
+.venv/bin/python -m playwright install chromium
+
+# Real dashboard + backend on synthetic data (no mocks):
+.venv/bin/python -m unittest discover -s tests -p 'browser_*.py' -v
+
+# Also run that journey on the private official data:
+MONEY_GRAPH_TEST_DATA=data/private/money-graph/input \
+  .venv/bin/python -m unittest discover -s tests -p 'browser_*.py' -v
+```
+
+Browser checks cover exact-ID search, edge directions, role/cluster coloring, graph navigation, explanations, isolates, depth-four warnings, missing/invalid IDs, exports, pagination on the supplied graph and mobile overflow. No app requests leave loopback. Tests require loopback sockets; sandboxed environments must permit them.
+
+The retained Node starter is checked separately, with the version pinned in `.nvmrc`:
+
+```bash
+source "$HOME/.nvm/nvm.sh"  # if nvm is not already loaded
+nvm use
+npm ci                    # only when dependencies are not installed
 npm run typecheck
 npm test
 npm run build
-NODE_ENV=production npm start  # serves the existing production build
-npm run openai:check -- --help # help only; makes no request
 ```
 
-Development uses Vite's `/api` proxy to Express, including a custom backend `PORT`. Vite stays on port 5173 and fails if it is occupied. Ctrl+C stops both development processes. Only the root `package-lock.json` is used. Install dependencies from the repository root.
+Its `npm run dev`, `npm start` and `scripts/start.sh` still launch the earlier connectivity app, not this Python dashboard. Existing optional AI code is not invoked by Money Graph. No changes were made to its API, dependencies or configuration. Remote CI for the final changes and Docker execution remain unverified; no push was made. The existing CI workflow covers the Node starter; Python/browser checks currently run locally.
 
-### Continuous integration
+## Architecture
 
-The [CI workflow](.github/workflows/jiggles-ci.yml) runs `npm ci`, `npm run typecheck`, `npm test` and `npm run build` on pushes and pull requests. Its single `ubuntu-latest` job has a 15-minute timeout and uses `.nvmrc` and the root lockfile. Tests use synthetic fixtures, loopback HTTP and mocked AI transport; keep the live `openai:check` command outside CI.
-
-Actions are pinned to exact commits with only `contents: read` permission. Checkout credential persistence and package-manager caching are disabled. The workflow does not deploy or upload artifacts. Remote execution remains unverified; check the run for the submitted revision. Local results and launch procedures are in [integration verification](docs/hackathon/integration-verification.md).
-
-### Configuration
-
-`.env.example` contains safe local defaults and empty optional AI settings. Both launchers copy it to `.env` **only if missing**. Edit `.env` yourself; it is ignored by Git and excluded from the image. Direct npm commands also work without `.env`. Do not shell-source this file. Use simple unquoted `KEY=value` entries or full-line `#` comments compatible with Node and Docker, without shell expansion. Docker rejects bare keys and `export KEY=value` lines without printing their values.
-
-| Variable | Default | Accepted values / purpose |
-| --- | --- | --- |
-| `HOST` | `127.0.0.1` | `127.0.0.1` or `0.0.0.0`; local backend bind address |
-| `PORT` | `3000` | Integer 1–65535; local backend port and Vite proxy target |
-| `BODY_LIMIT_BYTES` | `16384` | Integer 1–1048576; maximum JSON request body bytes |
-| `DOCKER_PORT` | `3000` | Export to the Docker launcher; published host port (not read from `.env`) |
-| `OPENAI_API_KEY` | Empty / absent | Optional server-only key; validated only when `generateText` is called |
-| `OPENAI_MODEL` | Empty / absent | Optional Responses model identifier; required only with explicit generation |
-
-For local launches, process environment overrides the root `.env`, e.g. `PORT=4000 ./scripts/start.sh`. Vite and Node use that same file for backend settings; `.env.local` and mode-specific files do not override the backend port. For Docker, edit `.env` for `BODY_LIMIT_BYTES`; the launcher overrides `HOST=0.0.0.0` and `PORT=3000` inside the container. An explicitly empty `DOCKER_PORT` is invalid. Invalid backend settings stop startup with field names and constraints, without printing values. Occupied ports cause failure without announcing readiness; no processes are killed. Change the relevant port or stop its owner yourself.
-
-Keep AI settings on the server; never use a `VITE_` prefix for credentials. Empty, missing or invalid AI settings do not block the health/echo app. The standalone connectivity CLI deliberately reads only explicitly exported process variables, not `.env`.
-
-### Optional AI connectivity check
-
-The server-only `generateText` helper in `backend/src/openai.ts` uses the official `openai@7.21.0` SDK and Responses API. It is not registered on an HTTP route. It caps input at 4,000 trimmed characters and output at 256 tokens (including reasoning), uses a 10-second timeout per attempt and a 15-second total deadline, and permits at most one SDK retry. It returns text and safe duration/model/usage metadata, or a fixed error code/message. It disables SDK logging and response storage (`store: false`); callers must keep prompts, keys and generated text out of logs.
-
-Normal startup, `/api/health`, `npm test`, build and CI never call AI. `npm run openai:check` without the flag exits 2 and makes no request; `--help` exits 0. The live check is separate and may incur cost. It sends only the fixed synthetic prompt `Reply with exactly OK.`, with 16 output tokens and zero retries. It accepts only `gpt-4.1-nano` or `gpt-4.1-nano-2025-04-14`; actual project/model access is unverified.
-
-With an authorized API key, model access and spending limits confirmed, run in Bash using the pinned Node version:
-
-```bash
-# Enter the authorized project key at the hidden prompt; do not paste it into a command.
-read -r -s -p 'Authorized project API key: ' OPENAI_API_KEY
-printf '\n'
-export OPENAI_API_KEY
-OPENAI_MODEL=gpt-4.1-nano npm run openai:check -- --allow-paid-request
-unset OPENAI_API_KEY
+```mermaid
+flowchart LR
+    P[Three local Parquet files] --> V[pandas + PyArrow validation]
+    V --> G[NetworkX directed graph: every node]
+    G --> F[Observed flow and neighbor features]
+    G --> C[Seeded Louvain communities]
+    C --> F
+    F --> R[Role rules and priority contributions]
+    R --> E[Three official CSVs + dashboard JSON]
+    E --> M[Hashes and run manifest]
+    R --> H[Read-only loopback Python server]
+    H --> D[Local HTML / SVG dashboard]
 ```
 
-The CLI prints safe metadata only. Missing configuration exits 2; authentication, model access, quota, rate-limit or timeout failures exit 1 with actionable messages. Resolve billing/access failures before another attempt.
+`money_graph/pipeline.py` owns calculations; `server.py` owns read-only routes; `static/` only displays results. No financial calculations are hidden in UI code. [Requirements](docs/hackathon/requirements.md) map the implementation to acceptance checks.
 
-### API examples
+## Limitations and next scale
 
-```bash
-curl http://localhost:3000/api/health
-# {"status":"ok"}
+The collection follows outgoing transfers from 81 seeds for four hops. Missing onward edges at depth four, missing external incoming flows, other banks and amounts below 5,000 KZT prevent complete flow/balance conclusions. No customer attributes are invented or externally enriched. No role ground truth exists; passing tests establishes implementation behavior, not AML accuracy. Transit ratios do not prove the same money moved onward. Terminal, coordinator and community labels require independent investigation. This small version does not perform temporal matching, sensitivity analysis or full-network force-layout visualization.
 
-curl -X POST http://localhost:3000/api/echo \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"  Hello, HackAlem!  "}'
-# {"text":"Hello, HackAlem!"}
+For roughly one million nodes, replace in-memory pandas/NetworkX with columnar scans, compact graph storage and partitioned/approximate algorithms. Index account neighborhoods on disk and serve bounded results; avoid loading all results into RAM or a browser. Reassess community stability, thresholds, runtime and memory on representative data. The current benchmark does not establish performance at that scale.
 
-curl -X POST http://localhost:3000/api/echo \
-  -H 'Content-Type: application/json' -d '{"text":""}'
-# HTTP 400:
-# {"error":{"code":"VALIDATION_ERROR","message":"Send an object containing only text: a string of 1–1000 characters after trimming.","issues":[{"field":"text","message":"text must contain at least one non-whitespace character."}]}}
-```
+A five-minute walkthrough: reproduce, show the three exports, inspect a high-priority node, then a depth-four account and an isolate. Explain one role rule and its priority contributions. A live presentation to organizers remains to be performed.
 
-`text` must be a string, trimmed to 1–1,000 JavaScript string characters; extra fields are rejected. The frontend disables empty submissions and shows loading, results, and API/network errors. Requests time out in the browser after 10 seconds. Content must be uncompressed JSON.
+## Sources and attribution
 
-All application errors use `{ "error": { "code": "...", "message": "..." } }`, with optional validation `issues`: 400 `VALIDATION_ERROR` / `INVALID_JSON` / `INVALID_REQUEST`, 413 `PAYLOAD_TOO_LARGE`, 415 `UNSUPPORTED_MEDIA_TYPE`, 404 `NOT_FOUND`, and 500 `INTERNAL_ERROR`. Unknown API paths and methods return JSON, never the frontend HTML.
-
-### Tests and limits
-
-`npm test` uses Node's test runner and actual HTTP requests on ephemeral loopback ports. It covers health, valid and invalid echo inputs, malformed JSON, size limits, media types, missing endpoints, static serving, safe logs, configuration validation, the frontend API client's round trip, and occupied-port startup. AI tests inject mocked transport and prohibit real fetch; importing the CLI does not execute it. `npm run build` also runs type-checks. No automated browser-test runner is configured.
-
-Request logs contain generated IDs, fixed route labels, status codes and durations; they exclude request text, URLs/query strings, headers, environment values and exception details. The optional AI helper has no UI or public endpoint. There is no persistence, database, authentication, rate limiting, queue, agent framework, TLS, deployment or domain-specific workflow. Health reports process responsiveness only. Only `/` is a frontend page; there is no client-side router or catch-all HTML fallback. Public hosting, HTTPS and reviewer access are not configured.
-
-### Working references
-
-- [Hackathon working guide](docs/hackathon/orientation.md): task selection, ownership and delivery.
-- [Money Graph references](docs/money-graph/README.md): graph semantics, role hypotheses and collection limits.
-- [Agent agreement](AGENTS.md): development and verification rules.
+The [official specification](https://docs.google.com/document/d/1JPLU-G6R25Ge2hVaY2J9cqvrx7FGExj87XKwJPaMz3o/edit?usp=sharing), [dataset README](https://drive.google.com/file/d/1ro-SiY042jv7De0h7tXBDyY8ZKdHz_US/view?usp=sharing) and [organizer Python starter](https://drive.google.com/file/d/1EnMGG22jSH7Mvgt396kKRi3bjAobsomN/view?usp=sharing) were inspected September 23, 2026. This implementation extends the starter's load/DiGraph/flow-feature/export structure, fixing isolate omission and adding validation, rules, clustering, ranking and viewing. See [DISCLOSURES.md](DISCLOSURES.md) for dependency licenses and AI/tool assistance.

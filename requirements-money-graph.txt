@@ -1,0 +1,7 @@
+# Python 3.12+; exact runtime pins for reproducible local analysis.
+pandas==3.0.3
+pyarrow==23.0.1
+networkx==3.6.1
+numpy==2.5.3
+python-dateutil==2.9.0.post0
+six==1.17.0
