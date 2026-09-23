@@ -1,0 +1,30 @@
+# Exact build-input allowlist: review additions when adding source files/assets.
+# This also excludes credentials, datasets and generated files nested in src.
+**
+!package.json
+!package-lock.json
+!frontend/
+!frontend/package.json
+!frontend/index.html
+!frontend/tsconfig.json
+!frontend/vite.config.ts
+!frontend/src/
+!frontend/src/App.tsx
+!frontend/src/api.ts
+!frontend/src/main.tsx
+!frontend/src/styles.css
+!backend/
+!backend/package.json
+!backend/tsconfig.json
+!backend/src/
+!backend/src/app.ts
+!backend/src/config.ts
+!backend/src/openai.ts
+!backend/src/server.ts
+# Keep sensitive file types excluded even if placed inside a source directory.
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
