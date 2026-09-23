@@ -1,7 +1,0 @@
-# Money Graph development and AI assistance
-
-Migrated: 2026-09-23 16:08 (Asia/Almaty, UTC+05:00). This records the migration time; the original work times were not recorded.
-
-- OpenAI Codex generated, adapted and reviewed code, tests and documentation at the repository owner's request. Repository content, tool results, aggregate dataset profiles and dashboard verification imagery were used as development context. This development assistance is separate from the application's execution; Money Graph performs no LLM calls.
-- `money_graph/pipeline.py` adapts the organizer starter's Parquet loading, directed graph construction, incoming/outgoing metrics and CSV contract. It adds all-node preservation, strict validation, rules, confidence/priority calculations, deterministic clustering and complete exports. The local HTTP/SVG dashboard and tests were created for this implementation. Minimal v2 adds isolated local uploads, status and atomic active-result publication, bounded graph expansion, measured cluster descriptions and regression/browser tests; existing scoring rules are retained. The starter's PageRank dependency and placeholder outputs are not used. No independently licensed proprietary project code was imported.
-- The six role formulas, thresholds and investigation weights are documented heuristic design choices, not organizer ground truth or calibrated probabilities. Communities and role descriptions are hypotheses. Correctness and reproducibility checks do not measure AML accuracy.

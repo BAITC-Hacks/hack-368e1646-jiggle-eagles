@@ -5,7 +5,7 @@
     if (location.protocol !== 'file:') {
       const application = document.createElement('script');
       application.type = 'module';
-      application.src = '/app.js';
+      application.src = './app.js';
       document.head.append(application);
       return;
     }
@@ -72,7 +72,7 @@
     command.style.whiteSpace = 'pre-wrap';
     command.style.overflowWrap = 'anywhere';
     command.style.padding = '16px';
-    command.style.background = 'var(--surface-subtle)';
+    command.style.background = '#eef5f2';
     command.style.borderRadius = '6px';
     command.append(node('code', './scripts/money-graph.sh --serve --upload-only'));
     panel.append(command, node('p', copy.port, 'muted'));
