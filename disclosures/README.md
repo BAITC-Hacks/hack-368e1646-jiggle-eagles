@@ -10,10 +10,13 @@ Timestamps on migrated entries identify their reorganization, not when the origi
 
 ## Entries
 
+- [Freedom-inspired interface, themes and README assistance](freedom-design-themes-16-22.md)
 - [Money Graph development and AI assistance](money-graph-development-16-08.md)
 - [Sources and data provenance](sources-and-data-provenance-16-08.md)
 - [Python setup and CI](python-setup-and-ci-16-08.md)
 - [Localization and language references](localization-16-08.md)
 - [Launch reliability and verification](launch-reliability-16-11.md)
+- [Saved analyses and interface](saved-analyses-interface-16-08.md)
+- [Separate analysis pages](separate-analysis-pages-16-25.md)
 - [Dependencies, licenses and technical sources](dependencies-and-licenses-16-08.md)
 - [Verification and remaining limits](verification-limits-16-08.md)
