@@ -1,4 +1,5 @@
 """Loopback dashboard with isolated upload runs and atomic in-memory publication."""
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -21,6 +22,11 @@ from .investigation.service import ReviewService
 from .uploads import MAX_UPLOAD_BYTES, INPUT_NAMES, parse_upload, read_upload, analysis_failure
 
 NODE_LIMIT = 50
+# Compact per-account projection: the overview map plots every account at once.
+MAP_FIELDS = ('gid', 'role', 'cluster_id', 'depth', 'is_seed', 'boundary', 'in_deg', 'out_deg',
+              'in_kzt', 'out_kzt', 'in_tx', 'out_tx', 'role_score', 'priority_score')
+# Grouped flow schematic: how the network works, before any single account is opened.
+CLUSTER_GROUPS = 12
 MAX_DETAILS_BYTES = 16 * 1024
 BUSY = {'receiving', 'validating', 'analyzing', 'exporting'}
 
@@ -33,6 +39,8 @@ class Snapshot:
     incident: dict
     peers: dict
     exports: dict[str, bytes]
+    map_payload: bytes
+    flow_payload: bytes
 
     @classmethod
     def create(cls, result: Analysis, out_dir: Path, revision: str) -> 'Snapshot':
@@ -71,7 +79,10 @@ class Snapshot:
                 incident[b].append(edge)
                 peers[a].add(b)
                 peers[b].add(a)
-        return cls(revision, data, nodes, incident, peers, exports)
+        map_payload = json_bytes(dict(revision=revision, profile=data['profile'],
+                                      nodes=[{field: node[field] for field in MAP_FIELDS} for node in data['nodes']]))
+        flow_payload = json_bytes(dict(revision=revision, modes=flow_modes(data['nodes'], data['edges'])))
+        return cls(revision, data, nodes, incident, peers, exports, map_payload, flow_payload)
 
     def neighborhood(self, gid: str, hops: int) -> dict:
         # Either direction defines hop distance; all display edges stay directed.
@@ -89,6 +100,67 @@ class Snapshot:
                     nodes=[dict(self.nodes[peer], hop=distances[peer]) for peer in ordered[:NODE_LIMIT]],
                     edges=edges)
 
+
+def flow_modes(nodes: list[dict], edges: list[dict]) -> dict:
+    """Collapse 2k accounts into a handful of groups per mode, keeping every KZT accounted for.
+
+    Grouping is presentation only: roles, scores and the CSV exports are untouched. Each mode
+    reports its groups and the directed money between them, so the schematic stays checkable
+    against nodes_roles.csv.
+    """
+    by_gid = {n['gid']: n for n in nodes}
+    ranked = [cluster for cluster, _ in Counter(n['cluster_id'] for n in nodes).most_common(CLUSTER_GROUPS)]
+    largest = set(ranked)
+
+    def role_key(node: dict) -> str:
+        return node['role']
+
+    def depth_role_key(node: dict) -> str:
+        return f"d{node['depth']}:{node['role']}"
+
+    def cluster_key(node: dict) -> str:
+        return f"c{node['cluster_id']}" if node['cluster_id'] in largest else 'other'
+
+    modes = {}
+    for name, key_of in [('role', role_key), ('depth_role', depth_role_key), ('cluster', cluster_key)]:
+        members: dict[str, list[dict]] = {}
+        for node in nodes:
+            members.setdefault(key_of(node), []).append(node)
+        internal: Counter = Counter()
+        internal_tx: Counter = Counter()
+        links: Counter = Counter()
+        link_tx: Counter = Counter()
+        for edge in edges:
+            source, target = key_of(by_gid[edge['src']]), key_of(by_gid[edge['dst']])
+            if source == target:
+                internal[source] += edge['sum_kzt']
+                internal_tx[source] += edge['n_tx']
+            else:
+                links[(source, target)] += edge['sum_kzt']
+                link_tx[(source, target)] += edge['n_tx']
+        groups = []
+        for key, group in members.items():
+            incoming = sum(value for (_, target), value in links.items() if target == key)
+            outgoing = sum(value for (source, _), value in links.items() if source == key)
+            sample = group[0]
+            groups.append(dict(
+                id=key, kind=name,
+                role=Counter(n['role'] for n in group).most_common(1)[0][0],
+                depth=sample['depth'] if name == 'depth_role' else None,
+                cluster_id=sample['cluster_id'] if name == 'cluster' and key != 'other' else None,
+                n_nodes=len(group), n_seed=sum(n['is_seed'] for n in group),
+                n_boundary=sum(n['boundary'] for n in group),
+                in_kzt=round(incoming, 2), out_kzt=round(outgoing, 2),
+                self_kzt=round(internal[key], 2), self_tx=internal_tx[key],
+                throughput=round(incoming + outgoing + internal[key], 2)))
+        groups.sort(key=lambda g: -g['throughput'])
+        modes[name] = dict(
+            groups=groups,
+            links=sorted((dict(src=source, dst=target, sum_kzt=round(value, 2), n_tx=link_tx[(source, target)])
+                          for (source, target), value in links.items()),
+                         key=lambda link: -link['sum_kzt']),
+            total_kzt=round(sum(links.values()) + sum(internal.values()), 2))
+    return modes
 
 def saved_analysis(out_dir: Path, revision: str) -> dict:
     manifest = json.loads((out_dir / 'run_manifest.json').read_bytes())
@@ -254,6 +326,8 @@ def make_server(result: Analysis | None, out_dir: Path, port: int = 8765) -> Das
               '/file-preview.js': ('file-preview.js', 'text/javascript'),
               '/review.js': ('review.js', 'text/javascript'),
               '/app.js': ('app.js', 'text/javascript'), '/i18n.js': ('i18n.js', 'text/javascript'),
+              '/map.js': ('map.js', 'text/javascript'),
+              '/flows.js': ('flows.js', 'text/javascript'),
               **{f'/locales/{locale}.json': (f'locales/{locale}.json', 'application/json')
                  for locale in ('en', 'kk', 'ru')}}
 
@@ -406,14 +480,18 @@ def make_server(result: Analysis | None, out_dir: Path, port: int = 8765) -> Das
                 return
             with self.server.lock:
                 snapshot = self.server.active
-            if url.path not in {'/api/overview', '/api/account', '/api/graph'} and not (
+            if url.path not in {'/api/overview', '/api/map', '/api/flows', '/api/account', '/api/graph'} and not (
                     url.path.startswith('/exports/') and url.path.removeprefix('/exports/') in [*SCHEMAS, 'run_manifest.json']):
                 self.error(404, 'error.notFound')
                 return
             if snapshot is None:
                 self.error(503, 'error.noAnalysis')
                 return
-            if url.path == '/api/overview':
+            if url.path == '/api/map':
+                self.send(200, snapshot.map_payload, 'application/json')
+            elif url.path == '/api/flows':
+                self.send(200, snapshot.flow_payload, 'application/json')
+            elif url.path == '/api/overview':
                 self.send(200, json_bytes(dict(revision=snapshot.revision, **{k: snapshot.data[k]
                     for k in ['profile', 'config', 'warnings', 'clusters', 'top', 'methods', 'method_catalogs', 'rule_parameters'] if k in snapshot.data})), 'application/json')
             elif url.path in {'/api/account', '/api/graph'}:

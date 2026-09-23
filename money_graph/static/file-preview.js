@@ -6,6 +6,22 @@
       const application = document.createElement('script');
       application.type = 'module';
       application.src = '/app.js';
+      // A server started before these files were saved still serves index.html but 404s on newer
+      // modules. Without this the page looks normal yet has no listeners at all, and the only clue
+      // is in the browser console. Say it on the page instead.
+      application.onerror = () => {
+        const stale = {
+          en: 'The dashboard scripts failed to load, so nothing on this page is active. The running server is older than these files: stop it, start it again, then reload.',
+          kk: 'Бақылау тақтасының скриптері жүктелмеді, сондықтан беттегі ештеңе жұмыс істемейді. Іске қосылған сервер осы файлдардан ескі: оны тоқтатып, қайта іске қосыңыз да, бетті жаңартыңыз.',
+          ru: 'Скрипты панели не загрузились, поэтому на странице ничего не работает. Запущенный сервер старше этих файлов: остановите его, запустите заново и обновите страницу.',
+        };
+        const language = String(navigator.language || 'en').toLowerCase().replaceAll('_', '-').split('-')[0];
+        const notice = document.createElement('p');
+        notice.className = 'error';
+        notice.setAttribute('role', 'alert');
+        notice.textContent = stale[language === 'kz' ? 'kk' : Object.hasOwn(stale, language) ? language : 'en'];
+        (document.querySelector('main') || document.body).prepend(notice);
+      };
       document.head.append(application);
       return;
     }

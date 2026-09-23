@@ -294,6 +294,95 @@ footer { color: var(--muted); font-size: 11px; text-align: center; padding: 28px
 }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
 
+/* Overview map: the whole network before any single account, so nothing is explored blind.
+   Every colour is a theme token, so both palettes stay consistent with the rest of the page. */
+.map { margin-top: 18px; }
+.map-body { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 20px; align-items: start; margin-top: 12px; }
+.map-plot { position: relative; min-width: 0; }
+.map-plot > svg, .flows > svg { display: block; width: 100%; background: var(--surface-subtle); border: 1px solid var(--border); border-radius: 12px; }
+#map-caption, #flows-caption { font-size: 12px; color: var(--muted); margin: 8px 0 0; }
+.map .section-heading > div { flex: 1 1 360px; min-width: 0; }
+.map .color-label { flex: 0 0 auto; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 14px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; background: var(--surface-subtle); color: var(--text);
+  border: 1px solid var(--border); border-radius: 999px; padding: 6px 11px; font-size: 12px; font-weight: 600; }
+.chip small { font-variant-numeric: tabular-nums; color: var(--muted); font-weight: 500; }
+.chip[aria-pressed=true] { background: var(--action); border-color: var(--action); color: var(--action-text); }
+.chip[aria-pressed=true] small { color: var(--action-text); opacity: .75; }
+.chip .dot { width: 9px; height: 9px; flex-shrink: 0; }
+.chip.toggle { border-style: dashed; }
+
+.axis { stroke: var(--border); stroke-width: 1; }
+.grid { stroke: var(--border); stroke-width: 1; opacity: .45; }
+.tick { font-size: 9.5px; fill: var(--muted); }
+.axis-title { font-size: 10.5px; fill: var(--muted); letter-spacing: .6px; font-weight: 600; }
+.balance { fill: none; stroke: var(--border); stroke-width: 1.2; stroke-dasharray: 5 4; }
+.zone { font-size: 9px; fill: var(--muted); letter-spacing: 1.1px; font-weight: 600; opacity: .7; }
+
+.point { pointer-events: none; }
+circle.point[data-gid] { pointer-events: auto; cursor: pointer; }
+circle.point[data-gid]:hover { stroke: var(--focus); stroke-width: 2; }
+.map-selected { fill: none; stroke: var(--brand); stroke-width: 2.5; }
+.map-selected-label { font-size: 10.5px; fill: var(--text); font-weight: 650;
+  paint-order: stroke; stroke: var(--surface-subtle); stroke-width: 3.5px; stroke-linejoin: round; }
+
+.map-tooltip { position: absolute; z-index: 5; pointer-events: none; background: var(--text); color: var(--surface);
+  border-radius: 10px; padding: 9px 11px; font-size: 11.5px; line-height: 1.55; max-width: 230px; }
+.map-tooltip strong { display: block; font-size: 13px; font-variant-numeric: tabular-nums; }
+.map-tooltip span { display: block; opacity: .8; }
+.map-tooltip em { display: block; margin-top: 5px; color: var(--brand); font-style: normal; }
+
+.map-side { min-width: 0; }
+.leaders { list-style: none; margin: 10px 0 0; padding: 0; max-height: 430px; overflow: auto; }
+.leader { display: block; width: 100%; position: relative; text-align: left; background: transparent; color: var(--text);
+  border: 0; border-radius: 10px; padding: 8px 8px 11px; }
+.leader:hover, .leader.selected { background: var(--selection); }
+.leader-head { display: flex; align-items: baseline; gap: 7px; }
+.leader-head strong { font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.leader-role { font-size: 10.5px; color: var(--muted); }
+.leader-value { display: block; font-size: 11px; color: var(--muted); margin: 2px 0 5px; font-variant-numeric: tabular-nums; }
+.leader-bar { display: block; height: 3px; border-radius: 2px; opacity: .8; }
+
+/* A visited path, so clicking through the network never loses where the review started. */
+.trail { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 14px; font-size: 11.5px; }
+.trail-label { color: var(--muted); letter-spacing: .4px; }
+.trail-step { background: var(--surface-subtle); color: var(--action); padding: 4px 9px; font-size: 11.5px;
+  border-radius: 8px; font-variant-numeric: tabular-nums; }
+.trail-current { background: var(--action); color: var(--action-text); border-radius: 8px; padding: 4px 9px; font-variant-numeric: tabular-nums; }
+.trail-sep { color: var(--muted); }
+
+/* Money reads left to right in the neighbourhood view; labels keep a halo over the connectors. */
+.lane-caption { font-size: 9.5px; fill: var(--muted); letter-spacing: 1.3px; font-weight: 650; }
+.lane-caption.focus { fill: var(--text); }
+.came-from { fill: none; stroke: var(--focus); stroke-width: 2.5; stroke-dasharray: 3 3; }
+.edge.direct { stroke: var(--text); opacity: .55; }
+.node-label, .node-role { paint-order: stroke; stroke: var(--surface-subtle); stroke-width: 3px; stroke-linejoin: round; }
+.node-label { font-size: 11px; }
+.node-role { font-size: 9.5px; }
+
+/* Grouped flow schematic: the network's shape before any single account is opened. */
+.flows { margin-top: 18px; }
+.ribbon { fill: none; opacity: .5; stroke-linecap: round; pointer-events: stroke; transition: opacity .15s; }
+.ribbon:hover { opacity: .85; }
+.ribbon.dimmed { opacity: .07; }
+.flow-group { cursor: pointer; transition: opacity .15s; }
+.flow-group.dimmed { opacity: .3; }
+.flow-group:hover rect:first-of-type, .flow-group.selected rect:first-of-type { fill-opacity: .3; }
+.flow-group.selected rect:first-of-type { stroke-width: 2.6; }
+.flow-group:focus-visible { outline: none; }
+.flow-group:focus-visible rect:first-of-type { stroke: var(--focus); stroke-width: 3; }
+.flow-name { font-size: 11.5px; font-weight: 650; fill: var(--text); }
+.flow-meta { font-size: 9.5px; fill: var(--muted); }
+.flow-group.narrow .flow-name { font-size: 10.5px; }
+.flow-group.narrow .flow-meta { font-size: 9px; }
+.flow-axis { font-size: 9.5px; fill: var(--muted); letter-spacing: 1.2px; font-weight: 650; }
+.self-loop { fill: none; stroke-width: 2.2; opacity: .75; }
+#flows-detail { margin: 12px 0 0; font-size: 12.5px; color: var(--text); min-height: 2.6em; }
+
+@media (max-width: 1100px) { .map-body { grid-template-columns: minmax(0, 1fr); } .leaders { max-height: none; } }
+@media (max-width: 650px) { .chip { font-size: 11px; padding: 5px 9px; } }
+
 /* Investigation review: scoped surfaces reuse the existing theme tokens. */
 .review-area, .investigation-panel { margin: 1rem 0; }
 .review-toolbar, .review-tabs {
