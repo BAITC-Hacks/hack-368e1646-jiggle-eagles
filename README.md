@@ -6,12 +6,24 @@ The first version works end to end: validation, all-node directed graph, six rol
 
 ## Setup
 
-Use Python **3.12+** (verified with 3.14.6), Bash and the repository root. Dependencies are pinned in [requirements-money-graph.txt](requirements-money-graph.txt); installation needs internet, analysis does not.
+Use Bash on macOS/Linux (or WSL), from the repository root. The exact Python interpreter is pinned in [`.python-version`](.python-version); application packages are pinned in [requirements-money-graph.txt](requirements-money-graph.txt). Install that interpreter first. If you use uv, `uv python install "$(cat .python-version)"` installs it. An existing matching Python on PATH also works; uv is optional.
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements-money-graph.txt
+./scripts/setup.sh
 ```
+
+After preparing the input directory below, run `./scripts/money-graph.sh --serve` and open **http://127.0.0.1:8765**. Setup creates the project-local `.venv`, installs exact package versions, and checks dependency consistency. No activation, Node build, `.env`, API key or database is needed. Installation needs internet (or cached packages); analysis stays local. Ctrl+C stops the server.
+
+Setup reuses an existing compatible `.venv`; it never deletes or replaces an incompatible environment. Both setup and launch reject the wrong Python version, external/shared virtual environments and system packages. Launch also checks every runtime package pin before importing the app and ignores ambient Python import paths. To repair missing/drifted packages, rerun setup. For a wrong interpreter or incomplete environment, move the old `.venv` aside first. Use `MONEY_GRAPH_PYTHON=/absolute/path/to/python ./scripts/setup.sh` to select an installed interpreter explicitly when creating the environment.
+
+| Purpose | Command |
+| --- | --- |
+| Money Graph setup | `./scripts/setup.sh` |
+| Dashboard, analyze existing local inputs | `./scripts/money-graph.sh --serve` |
+| Export results without serving | `./scripts/money-graph.sh` |
+| Older Node starter only | `npm run dev`, `npm start`, `scripts/start.sh`, `scripts/start-docker.sh` |
+
+For startup from existing files, prepare the input directory below.
 
 Obtain the authorized [organizer dataset archive](https://drive.google.com/file/d/1yHdWaSb6gwPAUrqco-KrwR2U_YhzFQFT/view?usp=sharing). Extract **only** its `data/nodes.parquet`, `data/edges.parquet` and `data/transactions.parquet` into:
 
@@ -22,7 +34,7 @@ data/private/money-graph/input/
   transactions.parquet
 ```
 
-For this working copy the inputs have already been retrieved and verified. Inputs, source archives and account-level results stay in ignored `data/private/`; they are not bundled in Git or the existing Docker image. Reviewers need organizer-authorized access to the same archive. [Data contract and hashes](docs/hackathon/data-profile.md) identify the verified files. There is no implicit demo-data fallback.
+For this working copy the inputs have already been retrieved and verified. Working inputs, downloaded archives and generated results use ignored `data/private/`. **The repository also contains tracked reference copies of the three Parquet files in `docs/my-docs/data/`**, identical to the verified inputs; ignoring `data/private/` does not exclude those copies or remove their Git history. They remain unchanged by setup. The existing Docker allowlist excludes both locations. Reviewers still need organizer authorization to use the dataset; repository access does not imply permission to redistribute it. [Data contract and hashes](docs/hackathon/data-profile.md) identify the verified files. There is no implicit demo-data fallback.
 
 ## One-command reproduction and dashboard
 
@@ -108,7 +120,7 @@ Verified: exact official schemas and gid coverage; scores and evidence constrain
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 
 # One-time browser-test setup:
-.venv/bin/python -m pip install -r requirements-money-graph-test.txt
+./scripts/setup.sh --test
 .venv/bin/python -m playwright install chromium
 
 # Real dashboard + backend on synthetic data (no mocks):
@@ -132,7 +144,7 @@ npm test
 npm run build
 ```
 
-Its `npm run dev`, `npm start` and `scripts/start.sh` still launch the earlier connectivity app, not this Python dashboard. Existing optional AI code is not invoked by Money Graph. No changes were made to its API, dependencies or configuration. Remote CI for the final changes and Docker execution remain unverified; no push was made. The existing CI workflow covers the Node starter; Python/browser checks currently run locally.
+Its `npm run dev`, `npm start` and `scripts/start.sh` still launch the earlier connectivity app, not this Python dashboard. Existing optional AI code is not invoked by Money Graph. No changes were made to its API, dependencies or configuration. Remote CI for the final changes and Docker execution remain unverified; no push was made. The CI workflow defines separate jobs for Money Graph and the Node starter. Money Graph reads `.python-version`, runs `scripts/setup.sh --test`, installs Chromium and runs the Python/setup/HTTP and browser suites on synthetic inputs. Remote Actions execution remains pending until an authorized push.
 
 ## Architecture
 

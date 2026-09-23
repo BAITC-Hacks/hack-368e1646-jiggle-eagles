@@ -1,6 +1,16 @@
-# Deployment readiness
+# Local launch and deployment readiness
 
-The app supports a single production origin for the frontend and API. Public hosting, HTTPS, reviewer access and the evaluation availability window are not configured. Docker image/container execution remains unverified.
+## Money Graph dashboard
+
+The supported delivery is a local Python dashboard. Follow the [setup instructions](../../README.md#setup): `./scripts/setup.sh`, then `./scripts/money-graph.sh --serve`. The interpreter is pinned in [`.python-version`](../../.python-version); runtime dependencies live in the project `.venv`. There is no Node build, database, `.env`, API key or cloud service requirement.
+
+The server binds to `127.0.0.1:8765` by default. Use `--port` for another local port, `--data` for authorized inputs, and `--out` for a separate results directory. Ctrl+C stops the foreground server. Avoid concurrent analyses against the same output directory.
+
+The existing Dockerfile packages only the older Node starter. Money Graph has no verified container or public hosting configuration. Its loopback restrictions are deliberate; public hosting would require a separate access-control and deployment design. Tracked reference data under `docs/my-docs/data/` must be considered when distributing the repository; see the [data notes](../../README.md#setup).
+
+## Legacy Node starter
+
+The details below apply only to the older starter. It supports a single production origin for its frontend and API. Public hosting, HTTPS, reviewer access and the evaluation availability window are not configured. Docker image/container execution remains unverified.
 
 ## Runtime
 
@@ -31,7 +41,7 @@ npm run build
 NODE_ENV=production npm start
 ```
 
-Configure the host's restart policy around the production start command. For Docker, follow [README](../../README.md#launch-with-docker) and the [pending Docker checks](integration-verification.md#pending-docker-verification); image builds do not run the full test suite.
+Configure the host's restart policy around the production start command. For Docker, run `./scripts/start-docker.sh` after starting the Docker daemon; image builds do not run the full test suite. Verify non-root execution, loopback publishing, configuration and Ctrl+C cleanup before relying on the container.
 
 ## Before making the release available
 

@@ -1,4 +1,4 @@
-# Python 3.12+; exact runtime pins for reproducible local analysis.
+# Interpreter version: .python-version. Exact runtime dependency pins follow.
 pandas==3.0.3
 pyarrow==23.0.1
 networkx==3.6.1
