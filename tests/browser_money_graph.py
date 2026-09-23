@@ -637,3 +637,113 @@ class BrowserJourney(unittest.TestCase):
                     browser.close()
                     server.shutdown()
                     thread.join()
+
+
+class InvestigationBrowserJourney(unittest.TestCase):
+    def test_review_findings_checks_evidence_follow_up_brief_and_restart(self):
+        from money_graph.investigation.service import ReviewService
+        from money_graph.investigation.provider import AISettings, DEFAULT_MODEL
+        from investigation_fixtures import ScriptedProvider, case
+        with tempfile.TemporaryDirectory() as temporary, sync_playwright() as playwright:
+            root = Path(temporary)
+            write_fixture(root / 'input', case())
+            result, _ = run(root / 'input', root / 'out')
+            browser = playwright.chromium.launch()
+            try:
+                for restarting in (False, True):
+                    with make_server(None if restarting else result, root / 'out', 0) as server:
+                        server.reviews = ReviewService(root / 'out', settings=AISettings(), provider=ScriptedProvider())
+                        thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+                        base = f'http://127.0.0.1:{server.server_port}'
+                        page = browser.new_page(locale='en-GB', viewport={'width': 1440, 'height': 1100})
+                        errors = []; page.on('pageerror', lambda error: errors.append(str(error)))
+                        try:
+                            page.goto(base + '/analyses/startup')
+                            expect(page.locator('#account-area')).to_be_visible()
+                            expect(page.locator('#review-start')).to_be_enabled()
+                            if not restarting:
+                                page.locator('#gid').fill(str(BASE + 15)); page.locator('#search-form button').click()
+                                expect(page.locator('#account-id')).to_contain_text(str(BASE + 15))
+                                page.locator('#zoom-in').click()
+                                before = page.locator('#graph-viewport').get_attribute('transform')
+                                page.locator('#review-start').click()
+                                expect(page.locator('.suggestion-card')).to_have_count(1, timeout=10000)
+                                expect(page.locator('#review-progress')).to_contain_text('Candidates examined: 1')
+                                page.locator('.suggestion-card').click()
+                                expect(page.locator('#investigation-panel')).to_be_visible()
+                                expect(page.locator('#investigation-content')).to_contain_text('Incoming counterparties')
+                                expect(page.locator('#graph-caption')).to_contain_text('Investigation selection')
+                                page.locator('#tab-checks').click()
+                                expect(page.locator('#investigation-content')).to_contain_text('connections')
+                                page.locator('#tab-evidence').click()
+                                expect(page.locator('#investigation-content')).to_contain_text('KZT')
+                                page.locator('#review-follow-up').click()
+                                expect(page.locator('#review-follow-up')).to_have_attribute('aria-pressed', 'true')
+                                page.locator('#review-brief').click()
+                                expect(page.locator('#brief-dialog')).to_be_visible()
+                                expect(page.locator('#brief-content')).to_contain_text('Shared recipient needs context')
+                                expect(page.locator('#brief-content')).to_contain_text(DEFAULT_MODEL)
+                                page.locator('#brief-close').click()
+                                page.locator('#investigation-close').click()
+                                expect(page.locator('#account-id')).to_contain_text(str(BASE + 15))
+                                self.assertEqual(page.locator('#graph-viewport').get_attribute('transform'), before)
+                                page.locator('.suggestion-card').click()
+                                page.locator('#theme').select_option('dark')
+                                for locale in ('ru', 'kk', 'en'):
+                                    page.locator('#language').select_option(locale)
+                                    expect(page.locator('#investigation-panel')).to_be_visible()
+                                    expect(page.locator('#review-follow-up')).to_have_attribute('aria-pressed', 'true')
+                                page.set_viewport_size({'width': 390, 'height': 844})
+                                self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'), 390)
+                                page.set_viewport_size({'width': 1440, 'height': 1100})
+                                page.screenshot(path='/tmp/money-graph-investigation.png', full_page=True)
+                            else:
+                                expect(page.locator('.suggestion-card')).to_have_count(1)
+                                expect(page.locator('.suggestion-card')).to_contain_text('Marked for follow-up')
+                                expect(page.locator('#review-briefs button')).to_have_count(1)
+                                page.locator('#review-briefs button').click()
+                                expect(page.locator('#brief-content')).to_contain_text('Shared recipient needs context')
+                                page.locator('#brief-close').click()
+                                page.locator('.suggestion-card').click()
+                                page.locator('#tab-evidence').click()
+                                expect(page.locator('#investigation-content')).to_contain_text('Incoming counterparties')
+                            self.assertEqual(errors, [])
+                        finally:
+                            page.close(); server.shutdown(); thread.join()
+            finally: browser.close()
+
+    def test_running_review_stays_with_analysis_and_cancellation_is_terminal(self):
+        from money_graph.investigation.service import ReviewService
+        from money_graph.investigation.provider import AISettings
+        from investigation_fixtures import ScriptedProvider, case
+        entered, release = threading.Event(), threading.Event()
+        scripted = ScriptedProvider()
+        def blocked(payload, timeout):
+            entered.set(); release.wait(timeout=10); return scripted(payload, timeout)
+        with tempfile.TemporaryDirectory() as temporary, sync_playwright() as playwright:
+            root = Path(temporary); write_fixture(root / 'input', case())
+            result, _ = run(root / 'input', root / 'out')
+            other = 'a' * 32; run(root / 'input', root / 'out' / 'uploads' / other / 'output')
+            with make_server(result, root / 'out', 0) as server:
+                server.reviews = ReviewService(root / 'out', settings=AISettings(), provider=blocked)
+                thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+                browser = playwright.chromium.launch(); page = browser.new_page(locale='en-GB')
+                base = f'http://127.0.0.1:{server.server_port}'
+                try:
+                    page.goto(base + '/analyses/startup'); expect(page.locator('#review-start')).to_be_enabled()
+                    page.locator('#review-start').click(); self.assertTrue(entered.wait(timeout=5))
+                    expect(page.locator('#review-cancel')).to_be_visible()
+                    page.locator('#back-analyses').click()
+                    page.locator(f'[data-analysis-id="{other}"] .history-actions button').last.click()
+                    expect(page).to_have_url(base + '/analyses/' + other)
+                    expect(page.locator('#review-progress')).to_contain_text('No review selected')
+                    expect(page.locator('.suggestion-card')).to_have_count(0)
+                    page.goto(base + '/analyses/startup'); expect(page.locator('#review-cancel')).to_be_visible()
+                    page.locator('#review-cancel').click(); expect(page.locator('#review-progress')).to_contain_text('Cancelled')
+                    release.set()
+                    identifier = next(iter(server.reviews.records)); server.reviews.workers[identifier][0].join(timeout=5)
+                    page.reload(); expect(page.locator('#review-progress')).to_contain_text('Cancelled')
+                    expect(page.locator('.suggestion-card')).to_have_count(0)
+                    self.assertEqual(server.reviews.records[identifier]['state'], 'cancelled')
+                finally:
+                    release.set(); browser.close(); server.shutdown(); thread.join()

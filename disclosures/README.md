@@ -10,6 +10,7 @@ Timestamps on migrated entries identify their reorganization, not when the origi
 
 ## Entries
 
+- [Optional investigation agent and live evaluation](investigation-agent-17-43.md)
 - [Freedom-inspired interface, themes and README assistance](freedom-design-themes-16-22.md)
 - [Money Graph development and AI assistance](money-graph-development-16-08.md)
 - [Sources and data provenance](sources-and-data-provenance-16-08.md)
