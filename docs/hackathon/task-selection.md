@@ -1,24 +1,17 @@
-# Task selection
+# Selected task
 
-Aim to choose within 20–30 minutes after briefs arrive. The coordinator recommends; the team decides. If a task is already selected, proceed to [task breakdown](task-breakdown.md).
+**Money Graph — HackAlem AI**, Finance track, Freedom. Official title: «Граф денег: восстановление финансовой структуры организованной группы по транзакционной сети».
 
-## Establish feasibility
+The user selected this task. The scope is a local investigation pipeline plus a graph viewer for an AML analyst, using the organizer's anonymized transaction network. Formal platform registration remains the team's responsibility.
 
-Collect the briefs, deadline/timezone, eligibility, deliverables and selection rules. Record confirmed facts with sources, assumptions and blocking unknowns in [requirements](requirements.md).
+The current React/Express starter provides a working UI/API foundation. The core can be designed as deterministic graph calculations; custom model training and a paid AI service are not required. An AI investigation assistant is optional after the mandatory path works.
 
-A candidate must satisfy all four gates:
+| Feasibility gate | Current evidence / remaining work |
+| --- | --- |
+| Requirements | User brief, full specification and dataset README available; mapped in [requirements](requirements.md) |
+| Data | Archive/starter links supplied; raw files, integrity and distribution procedure not yet verified |
+| Runtime | Existing Node toolchain and starter; Parquet and graph dependencies still to be selected |
+| Acceptance | Fixed export schemas, all-node coverage, <5-minute runtime, top ≥20, gid search and evidence checks defined; implementation pending |
+| Delivery | Diagram proposed; pipeline, exports and five-minute demo remain pending; captain confirms registration, deadline and submission procedure |
 
-- **Eligibility:** every mandatory condition and deliverable is understood and achievable.
-- **Access:** required datasets, services and credentials are available and permitted.
-- **Time:** implementation, integration, verification and submission fit the time remaining.
-- **Tools and ownership:** required hardware, tools and licensing terms are understood and acceptable.
-
-A failed gate excludes a candidate; an unknown gate remains blocked pending evidence.
-
-## Compare and choose
-
-Compare at most three feasible candidates by team familiarity, time to the first complete scenario, verification method, external dependencies and demonstrable value. Use rough estimates with reasons.
-
-Recommend the task with the clearest path to useful, verifiable mandatory behavior. State its largest risk and the strongest feasible alternative. If no candidate passes the gates, raise the blockers promptly.
-
-Record the team's choice, source brief, rationale and unresolved decisions. Follow [task breakdown](task-breakdown.md) and [execution](execution-plan.md). Confirm organizer rules before registration or any later task switch; an alternative is not automatic permission to switch.
+Proceed with [task breakdown](task-breakdown.md). This selection does not claim a completed investigation tool or measured role accuracy.

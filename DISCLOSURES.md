@@ -1,9 +1,10 @@
 # Development disclosures
 
 - OpenAI Codex generated and reviewed source code and documentation at the repository owner's request. Codex processed repository content as context.
-- The organizer's original README title and team description are retained.
+- The README identifies the Money Graph task and retains the organizer repository identifier and Jiggle Eagles team attribution.
 - Dependencies and licenses are recorded in `package-lock.json`. Technical sources include official [Node.js](https://nodejs.org/en/about/previous-releases), [Vite](https://vite.dev/guide/), [Tailwind](https://tailwindcss.com/docs/installation/using-vite), [Express](https://expressjs.com/en/5x/api/), [Zod](https://zod.dev/basics), [OpenAI SDK](https://developers.openai.com/api/reference/typescript), [Docker](https://docs.docker.com/build/concepts/context/), [checkout](https://github.com/actions/checkout/tree/v7.0.1) and [setup-node](https://github.com/actions/setup-node/tree/v7.0.0) documentation. No proprietary project code was copied.
-- [Energy references](docs/energy/README.md) use hypothetical examples, with sources listed in their [reference index](docs/energy/references.md). They do not establish official requirements or actual dataset semantics. No real dataset, model weights, tariff or emissions factor was imported.
+- Money Graph requirements, domain guidance and the proposed architecture were prepared with Codex from the user's brief, the [technical specification](https://docs.google.com/document/d/1JPLU-G6R25Ge2hVaY2J9cqvrx7FGExj87XKwJPaMz3o/edit?usp=sharing) and [dataset README](https://drive.google.com/file/d/1ro-SiY042jv7De0h7tXBDyY8ZKdHz_US/view?usp=sharing), read on September 23, 2026. The graph pipeline and its role/ranking rules are not implemented. Dataset statistics are source-reported, not independently measured.
+- The Money Graph dataset archive and organizer starter code have not been downloaded, inspected or incorporated. No Money Graph account records were sent to external services. Inputs and generated investigation artifacts are intended for ignored `data/private/money-graph/`; unrelated pre-existing private local files are retained outside the active task workflow.
 - The application's OpenAI integration has been tested with mocked transport only. No live or paid application AI request was made, and no competition dataset was sent through that integration. This is separate from Codex's use of repository context during development.
 
 ## Verification limits

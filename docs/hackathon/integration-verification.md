@@ -4,7 +4,7 @@ Release verification is pending. Local automated results and earlier launch obse
 
 ## Automated checks
 
-These historical local results used earlier Node.js and npm versions. Repeat the checks with the Node.js version pinned in [`.nvmrc`](../../.nvmrc) and its bundled npm; these results do not establish compatibility with that toolchain or release verification.
+Local checks on **September 23, 2026** used `nvm use` with the Node.js version pinned in [`.nvmrc`](../../.nvmrc) and its bundled npm. Checked state: uncommitted Money Graph documentation and starter-branding changes on `main`, based on `4ba85885830153873eb06b1c370c850044c5caa1`. These results verify the starter and support ENG-02; they do not establish MG-01–MG-10 feature acceptance or a submitted revision.
 
 | Command | Result |
 | --- | --- |
@@ -12,6 +12,10 @@ These historical local results used earlier Node.js and npm versions. Repeat the
 | `npm test` | 49 passed, 0 failed; loopback networking enabled, AI transport mocked |
 | `npm run build` | Passed for frontend and backend |
 | `bash -n scripts/start.sh scripts/start-docker.sh` | Passed |
+
+The first sandboxed test run passed 31 tests and failed 18 because loopback listening was denied (`EPERM`). The unchanged suite passed all 49 tests when rerun with loopback permission. No assertions were changed; no live AI request was made. Dependencies were already installed; a fresh `npm ci` rehearsal was not repeated.
+
+Documentation checks found all 73 local Markdown links/anchors valid across 16 files, no stale domain references in active documentation/frontend sources, and no whitespace errors in `git diff --check`. The official specification and dataset README were read; the Money Graph archive and organizer starter were not inspected. Raw-data acceptance, runtime benchmarks and CSV validation remain pending.
 
 ## Earlier launch observations
 
@@ -55,4 +59,4 @@ Use only test-owned processes and containers for cleanup. Native and shell-stub 
 - Remote [CI](../../README.md#continuous-integration): no GitHub Actions run verified for a submitted revision.
 - Automated browser coverage: no browser-test runner is configured.
 - Public hosting and reviewer access: see [deployment readiness](deployment-readiness.md).
-- Selected-task functionality: map acceptance evidence in [requirements](requirements.md); starter connectivity does not establish it.
+- Money Graph functionality (MG-01–MG-10): the Parquet pipeline, role/cluster/ranking calculations, exports, searchable graph and live demo are not implemented or verified. The architecture is a proposed design; map future acceptance evidence in [requirements](requirements.md).

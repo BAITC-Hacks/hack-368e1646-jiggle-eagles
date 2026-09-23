@@ -1,7 +1,43 @@
-# hack-368e1646-jiggle-eagles
-Hackathon team repository for Jiggle Eagles
+# Money Graph — HackAlem AI
 
-## HackAlem
+**Track:** Finance · **Task owner:** Freedom · **Team:** Jiggle Eagles
+
+Organizer repository: `hack-368e1646-jiggle-eagles`.
+
+Official title: **«Граф денег: восстановление финансовой структуры организованной группы по транзакционной сети»**.
+
+An investigation tool for a bank's anti-money-laundering analyst: reconstruct transfer networks, propose participant roles, group related accounts and explain which accounts to investigate first. All findings must be hypotheses for review, never accusations.
+
+**Current status:** project preparation and a working frontend/API connection check. The Parquet pipeline, graph analysis, CSV exports, ranking, search and network visualization are **not implemented**. The architecture is a proposed design. Running this starter does not produce the required investigation results.
+
+## Task and deliverables
+
+The supplied dataset describes July 2026: **2,248 nodes, 3,119 directed connections and 4,840 transactions**, traced outward from **81 seed clients** through four hops. Inputs are `nodes.parquet`, `edges.parquet` and `transactions.parquet`. These are organizer-reported figures; the actual archive has not been profiled here.
+
+- One reproducible local run from raw Parquet to all three CSVs in **under five minutes**.
+- An explainable role, role confidence, cluster and investigation priority for every node.
+- Cluster structure summaries and at least 20 ranked priority nodes with explanations.
+- A network view with transfer directions, roles, clusters and search by client `gid`.
+- Source code, this README, `nodes_roles.csv`, `clusters.csv`, `top_nodes.csv`, an architecture diagram and a five-minute live demo covering 2–3 nodes.
+
+Required role keys: `consolidator`, `transit`, `distributor`, `terminal`, `coordinator`, `peripheral`. Exact output schemas and acceptance checks are in [requirements](docs/hackathon/requirements.md). Formal role thresholds and priority rules must be implemented and documented before submission; [methodology](docs/money-graph/methodology.md) records the design constraints, not completed scoring rules.
+
+The fourth-hop boundary can hide outgoing activity. Transfers below **5,000 KZT**, external-bank transfers and incoming flows outside the sampled network are absent. Observed inflows/outflows are not full balances, and seed membership is not proof of a role or wrongdoing. No customer attributes may be invented or externally enriched. Core reproduction must work locally without cloud clusters, GPU training or paid services; a graph-grounded AI assistant is optional.
+
+## Sources and project guide
+
+- [Full technical specification](https://docs.google.com/document/d/1JPLU-G6R25Ge2hVaY2J9cqvrx7FGExj87XKwJPaMz3o/edit?usp=sharing) and [dataset README](https://drive.google.com/file/d/1ro-SiY042jv7De0h7tXBDyY8ZKdHz_US/view?usp=sharing), read September 23, 2026.
+- [Dataset archive](https://drive.google.com/file/d/1yHdWaSb6gwPAUrqco-KrwR2U_YhzFQFT/view?usp=sharing) and [organizer starter](https://drive.google.com/file/d/1EnMGG22jSH7Mvgt396kKRi3bjAobsomN/view?usp=sharing), not yet inspected or incorporated.
+- [Task requirements](docs/hackathon/requirements.md), [data contract](docs/hackathon/data-profile.md), [proposed architecture](docs/money-graph/architecture.md), [implementation plan](docs/hackathon/execution-plan.md) and [demo checklist](docs/hackathon/submission-checklist.md).
+- [All organizer resources](docs/hackathon/orientation.md), [agent agreement](AGENTS.md) and [development disclosures](DISCLOSURES.md).
+
+Keep authorized input files and generated investigation outputs under ignored `data/private/money-graph/`. The dataset is supplied for hackathon use; do not bundle it into public source or Docker images. A pipeline command and clean-machine data-access procedure remain to be implemented and verified.
+
+## Scaling to about one million nodes
+
+This is a design discussion, not a benchmark. At that size, use columnar input scans, compact graph storage and batch processing; bound or approximate expensive all-pairs/centrality work and record approximation parameters. Serve indexed node details and bounded neighborhoods instead of sending the entire graph to the browser. Reassess memory, runtime, cluster stability and ranking quality on representative data; the five-minute target on the supplied dataset does not establish performance at this scale.
+
+## Development starter
 
 A minimal connectivity test: React + Vite + TypeScript + Tailwind in `frontend/`, Node.js + Express + TypeScript + Zod in `backend/`. See [DISCLOSURES.md](DISCLOSURES.md) for sources and AI assistance.
 
@@ -23,7 +59,7 @@ Or from **any** working directory:
 /absolute/path/to/this-repository/scripts/start.sh
 ```
 
-The script checks Node/npm, creates `.env` only when missing, runs `npm ci --include=dev --no-audit --no-fund` and `npm run build`, then starts Express with `NODE_ENV=production`. Open **http://localhost:3000** and send `Hello, HackAlem!`. The page should display it under “API response.” Express serves both the built frontend and `/api` at this URL. Press **Ctrl+C** to stop. Startup requires no AI credentials or AI service access.
+The script checks Node/npm, creates `.env` only when missing, runs `npm ci --include=dev --no-audit --no-fund` and `npm run build`, then starts Express with `NODE_ENV=production`. Open **http://localhost:3000** and send `Hello, Money Graph!` in the connection check. The page should display it under “API response.” Express serves both the built frontend and `/api` at this URL. Press **Ctrl+C** to stop. Startup requires no AI credentials or AI service access.
 
 ### Launch with Docker
 
@@ -128,5 +164,5 @@ Request logs contain generated IDs, fixed route labels, status codes and duratio
 ### Working references
 
 - [Hackathon working guide](docs/hackathon/orientation.md): task selection, ownership and delivery.
-- [Energy references](docs/energy/README.md): measurement semantics, calculations and validation.
+- [Money Graph references](docs/money-graph/README.md): graph semantics, role hypotheses and collection limits.
 - [Agent agreement](AGENTS.md): development and verification rules.

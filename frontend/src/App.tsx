@@ -26,13 +26,14 @@ export function App() {
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col justify-center px-6 py-12">
       <header className="mb-8">
-        <p className="mb-3 text-sm font-semibold tracking-widest text-teal-700">HACKALEM</p>
-        <h1 className="text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">Connectivity test</h1>
+        <p className="mb-3 text-sm font-semibold tracking-widest text-teal-700">HACKALEM AI · FINANCE · FREEDOM</p>
+        <h1 className="text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">Money Graph</h1>
         <p className="mt-4 leading-relaxed text-slate-600">
-          Send a message to the Express API and see it echoed here.
+          A workspace for investigating transaction networks. Network analysis is not yet available.
         </p>
       </header>
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" aria-label="Echo test">
+        <h2 className="mb-4 text-lg font-semibold text-slate-900">Connection check</h2>
         <form onSubmit={submit} aria-busy={loading}>
           <label htmlFor="message" className="block text-sm font-semibold text-slate-800">Message</label>
           <p id="message-help" className="mt-1 text-sm text-slate-500">1–1,000 characters. Surrounding whitespace is trimmed.</p>
@@ -45,7 +46,7 @@ export function App() {
             value={text}
             onChange={(event) => setText(event.target.value)}
             aria-describedby="message-help"
-            placeholder="Hello, HackAlem!"
+            placeholder="Hello, Money Graph!"
             className="mt-4 w-full rounded-lg border border-slate-300 px-4 py-3 text-slate-900 outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
           />
           <button

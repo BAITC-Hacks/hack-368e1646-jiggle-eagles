@@ -1,25 +1,34 @@
-# Task breakdown
+# Money Graph task breakdown
 
-Turn the selected brief into independently verifiable work before implementation. Keep [requirements](requirements.md) and [assignments](agent-assignments.md) as the authoritative records.
+## First complete analyst journey
 
-## Define the result
+An analyst runs one local command against the three organizer Parquet files. The pipeline validates the input, builds the directed network, computes documented metrics, assigns roles/clusters/priorities and writes the three required CSVs. The analyst opens the viewer, selects a priority node or searches a gid, inspects its incoming/outgoing links and reads the evidence and collection caveats. They form a shortlist for further investigation; the tool does not determine guilt.
 
-Describe one complete scenario: “A user supplies an input; the system processes it and returns a result that supports a decision.” Separate mandatory behavior, supporting work and optional features.
+Acceptance: raw data → all-node coverage → reproducible exports → ranked explanations → searchable graph. Validate a seed with no observed edges, a fourth-hop node and an ambiguous role alongside an ordinary node. The planned flow is shown in [architecture](../money-graph/architecture.md).
 
-For each requirement, record:
+## Work packages
 
-- Source/version/section and a stable ID.
-- Observable acceptance steps, expected result and evidence to retain.
-- Implementation component, accountable owner and prerequisite decisions.
+| Work | Requirement IDs | Dependencies and evidence |
+| --- | --- | --- |
+| Inspect organizer inputs/starter | MG-01, MG-07 | Confirm [source contract](data-profile.md), hashes, counts and graph completeness; decide runtime/dependencies |
+| Local graph pipeline | MG-01, MG-04 | Preserve isolates; compute directed features and stable clusters; independently check synthetic motifs and actual aggregates |
+| Role/ranking rules and explanations | MG-02, MG-03, MG-05, MG-07 | Document thresholds, overlap, confidence, priority contributions and boundary handling; no hardcoded gid lists |
+| CSV exports and reproducibility | MG-01, MG-02, MG-04, MG-05, MG-08 | Exact schemas, valid ranges/references, deterministic ordering, full-run timing and offline reproduction |
+| Viewer and search | MG-06, ENG-01 | Real output/API; arrows, legends, cluster/role filters, gid search and evidence; browser acceptance |
+| Documentation and demo | MG-08–MG-10, ENG-02 | Update final diagram, setup/rules/limitations/scaling; integrated checks and five-minute rehearsal |
 
-Include eligibility, functionality, input/output constraints, performance, data handling and required deliverables. Resolve ambiguous clauses before dependent work. Add a UI, model or database only when the required behavior needs it.
+## Proposed boundaries, not implemented APIs
 
-## Establish data and interfaces
+| Boundary | Input → output | Validation and failure behavior |
+| --- | --- | --- |
+| Ingestion | Local Parquet files → typed nodes, edges, transactions and quality report | Fail with actionable messages for missing files, invalid types/IDs, dangling references and unreconciled aggregates; no silent substitutions |
+| Analysis | Validated graph plus versioned rules → features, role hypotheses, cluster membership and ranking | Reject nonfinite scores; handle zero denominators explicitly; record parameters and deterministic seeds/ties |
+| Export | Successful analysis → exact CSV schemas in [requirements](requirements.md) | Write consistent complete files; do not leave partial output presented as a successful run |
+| Viewer/API | Local analysis artifact → network, node details, clusters and ranked evidence | Preserve int64 IDs as decimal strings in JSON/UI; validate requests/responses; explicit unknown-gid and missing-output states |
+| Optional assistant | Authorized question plus computed graph evidence → cited explanation | Read-only graph functions, validated outputs, no fabricated attributes or numeric calculations in prompts; failure cannot block the core |
 
-Inspect provider documentation and sample records for schema, provenance, units, measurement type, intervals/timezone, scope and quality flags. For electricity data, use the [energy index](../energy/README.md) and [validation checklist](../energy/validation-and-guardrails.md#before-analysis). Block calculations with unresolved semantics.
+Current HTTP routes remain `/api/health` and `/api/echo`. Freeze actual endpoint shapes and exact file ownership with the integrator before feature work. No new package, runtime or graph API is selected by this document. The organizer starter is a candidate input, not integrated code.
 
-Confirm data access, reuse, redistribution, retention and external-service permissions. Use permitted synthetic fixtures during development and required real inputs for acceptance where applicable.
+## Independent acceptance fixtures
 
-Agree an API, function or CLI contract with the integrator and affected owners: inputs/outputs, required fields, limits, units/time semantics, validation/errors and a representative acceptance fixture. Record exact file ownership and dependency changes before parallel implementation.
-
-Verify the first implementation performs actual required processing. Label placeholders and mocks, assign their replacement, and exclude them from completed mandatory behavior. Continue with the [execution plan](execution-plan.md).
+Use clearly synthetic IDs and amounts. Useful motifs include many-to-one, one-to-many, a chain, a cycle, an isolated seed, a fourth-hop leaf and a node whose observed outflow exceeds observed inflow. Check expected degrees and sums by hand. Test that a chain's last collected node is not claimed to retain funds from a zero out-degree alone, and that missing observations are not replaced with zero balances. Exact role expectations depend on the documented rules once chosen.

@@ -1,25 +1,18 @@
-# Execution plan
+# Money Graph execution plan
 
-Adapt this five-hour schedule to the confirmed deadline and time remaining. Use [task selection](task-selection.md), [task breakdown](task-breakdown.md) and the [submission checklist](submission-checklist.md).
+Use the confirmed remaining event time; the five-hour case format does not start a new clock. The captain confirms the current deadline and delivery mechanism from [organizer resources](orientation.md). The milestones below are an implementation sequence, not a claim of completed features or authorization to publish.
 
-| Elapsed time | Outcome |
-| --- | --- |
-| 0:00–0:30 | Choose the task, confirm requirements, agree interfaces and owners; prepare acceptance inputs |
-| 0:30–1:30 | Integrate and verify the first complete scenario with real processing |
-| 1:30–3:00 | Complete mandatory behavior and important boundary/error cases |
-| 3:00–4:00 | Freeze optional scope; fix reliability and update setup/documentation |
-| 4:00–4:35 | Rehearse clean installation, launch and the main demo |
-| 4:35–5:00 | Resolve submission blockers, rerun affected checks and complete submission |
+| Order | Outcome | Exit check |
+| --- | --- | --- |
+| 1 | Inspect archive and starter, resolve source schema/precision and select local dependencies | Input manifest and integrity report; exact ownership and contracts agreed |
+| 2 | Build the smallest complete local pipeline | All source nodes retained; deterministic features, roles, clusters, ranking and all three CSVs |
+| 3 | Validate calculations and explanations | Hand-checked fixtures, collection-limit cases, output schema checks and documented thresholds pass |
+| 4 | Connect the viewer to actual output | Directions/roles/clusters visible; arbitrary gid search and browser journey pass |
+| 5 | Verify reproducibility and runtime | Fresh local setup, offline core, <300-second full run and repeat-output comparison |
+| 6 | Freeze mandatory scope and rehearse delivery | Final README/diagram/disclosures, root checks, CI status and five-minute demo with 2–3 nodes |
+
+Do not prioritize AI chat, model training or extra visual polish over missing mandatory behavior. Optional investigation functions must use the same tested graph results and evidence as the core.
 
 ## Coordination
 
-- Record one integrator, an acceptance owner and exact file ownership in [assignments](agent-assignments.md), following [AGENTS.md](../../AGENTS.md).
-- Agree interfaces and dependency changes before implementation. Serialize shared installations/builds and integrate small increments every 30–45 minutes.
-- Reserve time for setup and documentation updates throughout; follow any confirmed organizer reporting requirements.
-
-## When work slips
-
-- After 10–15 minutes blocked without new evidence, report the requirement, attempted checks and next decision to the integrator.
-- If the first scenario misses T+1:30, stop optional work and prioritize integration. Cut optional features before mandatory acceptance criteria.
-- Use a simpler implementation only if it still meets the brief. If a mandatory condition becomes infeasible, seek a team decision; confirm organizer rules before switching tasks.
-- Protect the final verification and submission buffer.
+[Assignments](agent-assignments.md) names the integrator and acceptance owner. Agree exact paths and shared API/dependency changes before implementation or parallel work. Serialize dependency installation and builds. Keep development progress in the conversation; record requirement evidence only when an acceptance check actually passes.

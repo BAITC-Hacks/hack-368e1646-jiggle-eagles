@@ -11,3 +11,6 @@ coverage/
 *.key
 *.p12
 *.pfx
+
+# Organizer data and local analysis artifacts are not redistributed.
+data/private/
