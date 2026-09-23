@@ -8,8 +8,35 @@ permissions:
   contents: read
 
 jobs:
+  money-graph:
+    name: Money Graph setup, Python and browser tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up pinned Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version-file: .python-version
+
+      - name: Install exact dependencies in the project environment
+        run: bash scripts/setup.sh --test
+
+      - name: Install Chromium and Linux browser dependencies
+        run: .venv/bin/python -m playwright install --with-deps chromium
+
+      - name: Setup, calculation, validation and HTTP regression tests
+        run: .venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
+
+      - name: Real browser journey with synthetic data
+        run: .venv/bin/python -m unittest discover -s tests -p 'browser_*.py' -v
+
   checks:
-    name: Typecheck, test, build
+    name: Legacy Node starter — typecheck, test, build
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

@@ -4,7 +4,11 @@
 
 Read this file, any more specific `AGENTS.md`, [README.md](README.md), [DISCLOSURES.md](DISCLOSURES.md), and the task's source requirements before editing. The integrator first records the branch/HEAD, `git status --short`, unstaged diff and staged diff; preserve all existing work and the index. In a shared checkout, other agents use that supplied baseline.
 
-Run commands from the repository root with the Node.js version pinned in [`.nvmrc`](.nvmrc) and its bundled npm. `.nvmrc` is the single source of truth for the toolchain; reference it instead of duplicating Node.js or npm version requirements in documentation. Activate it first with `nvm use`; do not assume the shell has it.
+Money Graph is the Python dashboard. Run `./scripts/setup.sh` to create/check its isolated `.venv` and install exact dependency pins. [`.python-version`](.python-version) is the single source of truth for the interpreter; setup and launch enforce it. Use `./scripts/money-graph.sh --serve` to launch. `./scripts/setup.sh --test` also installs browser-test dependencies; install Chromium separately with `.venv/bin/python -m playwright install chromium`.
+
+Python checks: `.venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v` and `.venv/bin/python -m unittest discover -s tests -p 'browser_*.py' -v`. Tests use synthetic fixtures by default; HTTP/browser checks require loopback networking. CI runs these separately from the retained Node starter.
+
+The following Node commands and the existing Docker image launch/check the legacy starter, not Money Graph. For that starter, run commands from the repository root with the Node.js version pinned in [`.nvmrc`](.nvmrc) and its bundled npm. `.nvmrc` is the single source of truth for the toolchain; reference it instead of duplicating Node.js or npm version requirements in documentation. Activate it first with `nvm use`; do not assume the shell has it.
 
 | Command | Purpose / verified behavior |
 | --- | --- |
@@ -14,7 +18,7 @@ Run commands from the repository root with the Node.js version pinned in [`.nvmr
 | `npm run build` | Type-checks, then builds `frontend/dist/` and `backend/dist/`. |
 | `npm start` | Serves the existing production build and API from Express. |
 
-Setup when needed: `npm ci` at the root, using the existing root lockfile. Only the integrator installs dependencies in a shared checkout; `scripts/start.sh` also installs dependencies. Do not install or build concurrently against the same dependency/output directories. There is no configured lint or browser-test script; never claim unrun checks.
+Setup when needed: `npm ci` at the root, using the existing root lockfile. Only the integrator installs dependencies in a shared checkout; `scripts/start.sh` also installs dependencies. Do not install or build concurrently against the same dependency/output directories. There is no configured lint or Node browser-test script; never claim unrun checks.
 
 ## Code quality and testing
 
@@ -33,7 +37,7 @@ Setup when needed: `npm ci` at the root, using the existing root lockfile. Only 
 - Test important calculations, validation, API behavior and failure cases. Avoid tests for trivial implementation details or cosmetic changes.
 - Derive expected results from requirements or independently verified examples, not from the implementation being tested.
 - Keep normal tests deterministic and credential-free. Mock external AI services; do not make paid requests during tests, startup or health checks.
-- For the selected task, add and maintain an automated browser test for the main user journey using the real frontend and backend, replacing only external services when necessary. No browser-test runner is currently configured; track this as a verification gap until the test is implemented and run.
+- Maintain the Money Graph browser journey in `tests/browser_money_graph.py` using the real frontend and backend. Playwright is test-only; replace only external services when necessary. Keep CI coverage aligned with the main user journey.
 - Keep live AI checks separate and explicitly invoked. Mocked test success does not establish model quality or live integration readiness.
 - Add a focused regression test for significant bugs where practical.
 - Never weaken assertions, skip failing tests or change expected results merely to make CI green.
