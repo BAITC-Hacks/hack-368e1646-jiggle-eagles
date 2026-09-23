@@ -1,30 +1,15 @@
-# Agent assignments
+# Money Graph implementation ownership
 
-Follow [AGENTS.md](../../AGENTS.md). Assign exact, nonoverlapping paths before parallel work.
+Codex is the sole integrator, implementer and acceptance/testing owner for MG-01–09 and ENG-01–02. No parallel agents are assigned.
 
-## Project scope
+Owned implementation paths: `money_graph/__init__.py`, `money_graph/__main__.py`, `money_graph/pipeline.py`, `money_graph/server.py`, `money_graph/static/index.html`, `money_graph/static/style.css`, `money_graph/static/app.js`, `tests/test_money_graph.py`, `tests/browser_money_graph.py`, `requirements-money-graph.txt`, `requirements-money-graph-test.txt`, `scripts/money-graph.sh`, `.gitignore`, `README.md`, `DISCLOSURES.md`.
 
-- **Integrator and acceptance/testing owner:** Codex, the primary agent. No other agents are assigned.
-- **Current scope:** Money Graph project preparation, source-linked requirements, domain guidance, architecture design and starter branding. Graph feature implementation is not part of this cleanup assignment.
-- **Root/UI ownership:** `AGENTS.md`, `README.md`, `DISCLOSURES.md`, `.gitignore`, `frontend/index.html`, `frontend/src/App.tsx`.
-- **Planning ownership:** `docs/hackathon/orientation.md`, `docs/hackathon/task-selection.md`, `docs/hackathon/task-breakdown.md`, `docs/hackathon/execution-plan.md`, `docs/hackathon/requirements.md`, `docs/hackathon/data-profile.md`, `docs/hackathon/agent-assignments.md`, `docs/hackathon/integration-verification.md`, `docs/hackathon/submission-checklist.md`.
-- **Domain ownership:** `docs/money-graph/README.md`, `docs/money-graph/methodology.md`, `docs/money-graph/architecture.md`; removal of the superseded domain guide directory is owned by the integrator.
-- **Exclusions:** backend code, API contracts, dependencies/lockfile, toolchain, launchers, private datasets, registration and publishing. No API/dependency change is part of preparation. Assign exact implementation and test paths before feature work.
-- **Acceptance:** requirements reflect the supplied brief and linked specification, source-reported data facts are distinguished from inspection, design is distinguished from implementation, and the starter remains functional.
-- **Decision owners:** Codex owns technical design and acceptance; the user/team captain owns registration, organizer clarifications, permitted data access and submission.
+Owned documentation paths: this file, `docs/hackathon/requirements.md`, `docs/hackathon/data-profile.md`, `docs/money-graph/methodology.md`, `docs/money-graph/architecture.md`, `docs/money-graph/README.md`. Inputs, source archives and generated results are owned under ignored `data/private/money-graph/`. Existing Node/React code, index and unrelated private files are preserved. The user-provided `docs/money-graph/task.md` is read-only.
 
-## Assignment template
+## Agreed local contract
 
-- Agent, objective and requirement IDs:
-- Worktree, branch, base revision and required uncommitted inputs:
-- Exact owned files (including tests), exclusions and shared-file owners:
-- Agreed API/function contract, validation/errors, units/time semantics and dependency changes:
-- Acceptance checks and evidence location:
-- Dependencies, blockers and decision owner:
-
-## Handoff template
-
-- Changed files, revision/uncommitted state and requirement IDs:
-- Checks performed, results, evidence and checks not run with reasons:
-- Unresolved issues (or “none”) and ownership transfers:
-- AI/tool assistance and sources for [DISCLOSURES.md](../../DISCLOSURES.md):
+- Python CLI reads the three documented Parquet files, validates before calculating, writes the three official CSV schemas and a deterministic dashboard JSON. A separate run manifest records hashes, versions, hardware and timing.
+- Python standard-library HTTP server binds only to `127.0.0.1`. Read-only `GET /api/overview` returns counts, cluster summaries and ranked accounts; `GET /api/account?gid=<exact decimal int64>` returns measured features, role rules, priority contributions and all incident directed edges. IDs are decimal strings in JSON. Invalid queries return 400, missing IDs/routes 404; runtime failures never substitute demo results.
+- CSV uses UTF-8, LF, exact decimal int64 IDs, fixed six-decimal scores and JSON arrays of decimal strings for `top_gids`. Amounts are observed KZT; dates have day precision with no timezone. Graph direction is payer → recipient; all supplied nodes are added first.
+- pandas and PyArrow load/validate Parquet; NetworkX builds the directed graph and seeded weighted Louvain communities. Exact dependency pins are in the two requirements files; Playwright is test-only. No new Node dependencies, external assets or runtime network services.
+- Acceptance: strict schemas and reconciliation; synthetic motifs and boundary counterexamples; all-node coverage including isolates; at least 20 ranked official accounts; byte-identical repeated CSV/JSON output; timed official run below 300 seconds; real HTTP and automated browser journey; existing root typecheck/tests/build. Remote CI remains a gap until a user-authorized push.
