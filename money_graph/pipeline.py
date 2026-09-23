@@ -6,6 +6,7 @@ have day precision. No external services are used. See methodology.md for rules.
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -21,6 +22,8 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 
+from .i18n import message, render
+
 SCHEMAS = {
     'nodes_roles.csv': ['gid', 'role', 'role_score', 'cluster_id', 'priority_score', 'evidence'],
     'clusters.csv': ['cluster_id', 'n_nodes', 'n_seed', 'sum_kzt_internal', 'top_gids', 'hypothesis'],
@@ -33,12 +36,16 @@ WARNINGS = [
     'Observed flows are not complete balances. Incoming transfers outside the sample are unobserved.',
     'July 2026, intra-bank transfers only, at least 5,000 KZT. Smaller transfers and other banks are absent.',
 ]
-CONFIG = {'rules_version': 1, 'louvain_seed': 42, 'resolution': 1.0, 'threshold': 1e-7,
+CONFIG = {'rules_version': 1, 'cluster_description_version': 2, 'louvain_seed': 42, 'resolution': 1.0, 'threshold': 1e-7,
           'amount_absolute_tolerance_kzt': 0.01, 'amount_relative_tolerance': 1e-12}
 
 
 class ValidationError(ValueError):
-    """Invalid input; no results should be published."""
+    """Invalid input with a stable, localizable descriptor."""
+
+    def __init__(self, key: str, **params: object):
+        self.message = message(key, **params)
+        super().__init__(render(self.message))
 
 
 @dataclass
@@ -50,9 +57,9 @@ class Analysis:
     profile: dict
 
 
-def require(condition: bool, message: str) -> None:
+def require(condition: bool, key: str, **params: object) -> None:
     if not condition:
-        raise ValidationError(message)
+        raise ValidationError(key, **params)
 
 
 def validate(nodes: pd.DataFrame, edges: pd.DataFrame, tx: pd.DataFrame) -> pd.DataFrame:
@@ -60,44 +67,44 @@ def validate(nodes: pd.DataFrame, edges: pd.DataFrame, tx: pd.DataFrame) -> pd.D
     for name, frame, columns in [('nodes', nodes, ['gid', 'depth', 'is_seed']),
                                   ('edges', edges, ['src', 'dst', 'sum_kzt', 'n_tx', 'depth']),
                                   ('transactions', tx, ['src', 'dst', 'date', 'sum_kzt'])]:
-        require(set(columns) <= set(frame.columns), f'{name}: missing required columns')
-        require(not frame[columns].isna().any().any(), f'{name}: null required values')
+        require(set(columns) <= set(frame.columns), 'validation.columns', name=name)
+        require(not frame[columns].isna().any().any(), 'validation.null', name=name)
         for col in set(columns) & {'gid', 'src', 'dst', 'depth', 'n_tx'}:
             values = frame[col]
             require(pd.api.types.is_integer_dtype(values.dtype) and not pd.api.types.is_bool_dtype(values.dtype),
-                    f'{name}.{col}: expected integer dtype (IDs must not pass through floats)')
-            require(all(-(2**63) <= int(x) < 2**63 for x in values), f'{name}.{col}: outside int64 range')
+                    'validation.integer', name=name, col=col)
+            require(all(-(2**63) <= int(x) < 2**63 for x in values), 'validation.range', name=name, col=col)
         if 'sum_kzt' in columns:
             require(pd.api.types.is_numeric_dtype(frame.sum_kzt) and not pd.api.types.is_bool_dtype(frame.sum_kzt),
-                    f'{name}.sum_kzt: expected numeric amounts')
-            require(np.isfinite(frame.sum_kzt.to_numpy(dtype=float)).all(), f'{name}: nonfinite amounts')
-            require((frame.sum_kzt >= 5000).all(), f'{name}: amount below 5,000 KZT')
-    require(len(nodes) > 0, 'nodes: empty universe')
-    require(not nodes.gid.duplicated().any(), 'nodes: duplicate gid')
-    require(not edges.duplicated(['src', 'dst']).any(), 'edges: duplicate ordered pair')
-    require(pd.api.types.is_bool_dtype(nodes.is_seed), 'nodes.is_seed: expected boolean dtype')
-    require(nodes.depth.between(0, 4).all(), 'nodes: depth must be 0–4')
-    require((nodes.is_seed == (nodes.depth == 0)).all(), 'nodes: seeds must have depth zero and vice versa')
-    require(edges.depth.between(1, 4).all(), 'edges: discovery depth must be 1–4')
-    require((edges.n_tx > 0).all(), 'edges: n_tx must be positive')
+                    'validation.numeric', name=name)
+            require(np.isfinite(frame.sum_kzt.to_numpy(dtype=float)).all(), 'validation.finite', name=name)
+            require((frame.sum_kzt >= 5000).all(), 'validation.threshold', name=name)
+    require(len(nodes) > 0, 'validation.emptyNodes')
+    require(not nodes.gid.duplicated().any(), 'validation.duplicateId')
+    require(not edges.duplicated(['src', 'dst']).any(), 'validation.duplicatePair')
+    require(pd.api.types.is_bool_dtype(nodes.is_seed), 'validation.boolean')
+    require(nodes.depth.between(0, 4).all(), 'validation.nodeDepth')
+    require((nodes.is_seed == (nodes.depth == 0)).all(), 'validation.seedDepth')
+    require(edges.depth.between(1, 4).all(), 'validation.edgeDepth')
+    require((edges.n_tx > 0).all(), 'validation.positiveCount')
     universe = set(nodes.gid)
     for name, frame in [('edges', edges), ('transactions', tx)]:
-        require(set(frame.src) | set(frame.dst) <= universe, f'{name}: endpoint missing from nodes')
+        require(set(frame.src) | set(frame.dst) <= universe, 'validation.endpoint', name=name)
     try:
         dates = pd.to_datetime(tx.date, errors='raise')
-        require(dates.dt.tz is None, 'transactions.date: timezone is not part of the source contract')
-        require((dates == dates.dt.normalize()).all(), 'transactions.date: expected day precision')
-        require(dates.between('2026-07-01', '2026-07-31').all(), 'transactions.date: outside July 2026')
+        require(dates.dt.tz is None, 'validation.timezone')
+        require((dates == dates.dt.normalize()).all(), 'validation.dayPrecision')
+        require(dates.between('2026-07-01', '2026-07-31').all(), 'validation.dateRange')
     except (ValueError, TypeError, AttributeError) as error:
-        raise ValidationError('transactions.date: expected valid July 2026 dates without time or timezone') from error
+        raise ValidationError('validation.date') from error
     # fsum avoids row-order-dependent accumulation of float64 source values.
     agg = tx.groupby(['src', 'dst'], sort=True).agg(
         total=('sum_kzt', lambda x: math.fsum(x)), count=('sum_kzt', 'size')).reset_index()
     joined = edges.merge(agg, on=['src', 'dst'], how='outer', indicator=True, validate='one_to_one')
-    require((joined['_merge'] == 'both').all(), 'edges/transactions: ordered pairs differ')
-    require((joined.n_tx == joined['count']).all(), 'edges/transactions: counts differ')
+    require((joined['_merge'] == 'both').all(), 'validation.pairs')
+    require((joined.n_tx == joined['count']).all(), 'validation.counts')
     require(np.isclose(joined.sum_kzt, joined.total, atol=0.01, rtol=1e-12).all(),
-            'edges/transactions: KZT sums differ (tolerance 0.01 + 1e-12 × transaction sum)')
+            'validation.sums')
     return tx.assign(date=dates)
 
 
@@ -136,17 +143,17 @@ def assign_role(f: dict) -> tuple[str, float, str, list[dict]]:
         candidates.append({'role': role, 'base_score': round(score, 6), 'rule': rule})
 
     if i >= 2 and o >= 2 and k >= 3:
-        add('coordinator', .55 + .35 * min(k / 6, 1), 'At least 2 incoming and 2 outgoing peers across at least 3 neighbor communities.')
+        add('coordinator', .55 + .35 * min(k / 6, 1), render(message('rule.coordinator')))
     if i >= 3 and i >= 2 * o:
-        add('consolidator', .55 + .35 * min(i / 10, 1), 'At least 3 incoming peers, at least twice the outgoing peer count.')
+        add('consolidator', .55 + .35 * min(i / 10, 1), render(message('rule.consolidator')))
     if o >= 5 and o >= 2 * i:
-        add('distributor', .55 + .35 * min(o / 20, 1), 'At least 5 outgoing peers, at least twice the incoming peer count.')
+        add('distributor', .55 + .35 * min(o / 20, 1), render(message('rule.distributor')))
     if not f['is_seed'] and i > 0 and o > 0 and ratio is not None and .8 <= ratio <= 1.2:
-        add('transit', .55 + .35 * max(0, 1 - abs(ratio - 1) / .2), 'Both directions observed; out/in KZT ratio is 0.8–1.2; not a seed. This does not trace the same funds.')
+        add('transit', .55 + .35 * max(0, 1 - abs(ratio - 1) / .2), render(message('rule.transit')))
     if f['depth'] < 4 and not f['is_seed'] and i > 0 and o == 0:
-        add('terminal', .45 + .15 * min(i / 5, 1), 'Incoming peers but no observed outgoing peers below depth 4; not a seed. Candidate endpoint only.')
+        add('terminal', .45 + .15 * min(i / 5, 1), render(message('rule.terminal')))
     if not candidates:
-        add('peripheral', .1 if i + o == 0 else .2, 'No stronger rule matched; insufficient structural evidence, not a judgment about the customer.')
+        add('peripheral', .1 if i + o == 0 else .2, render(message('rule.peripheral')))
     candidates.sort(key=lambda c: (-c['base_score'], ROLES.index(c['role'])))
     best = candidates[0]
     score = best['base_score'] - (.1 if len(candidates) > 1 else 0)
@@ -155,8 +162,49 @@ def assign_role(f: dict) -> tuple[str, float, str, list[dict]]:
     return best['role'], round(score, 6), best['rule'], candidates
 
 
-def analyze(nodes: pd.DataFrame, edges: pd.DataFrame, tx: pd.DataFrame) -> Analysis:
+def cluster_description_parts(members: list[dict], internal: list[tuple], graph: nx.DiGraph,
+                              membership: dict[int, int]) -> list[dict]:
+    """Measured motifs as message descriptors, independent of display language."""
+    fan_in = [f for f in members if f['in_deg'] >= 3 and f['in_deg'] >= 2 * f['out_deg']]
+    fan_out = [f for f in members if f['out_deg'] >= 5 and f['out_deg'] >= 2 * f['in_deg']]
+    bridges = []
+    for f in members:
+        gid = f['gid']
+        incoming = {membership[p] for p in graph.predecessors(gid) if p != gid}
+        outgoing = {membership[p] for p in graph.successors(gid) if p != gid}
+        if incoming and outgoing and len(incoming | outgoing) >= 2:
+            bridges.append((f, len(incoming | outgoing)))
+    parts = [message('cluster.intro', accounts=len(members), links=len(internal)),
+             message('cluster.fans', incoming=len(fan_in), outgoing=len(fan_out))]
+    for candidates, direction, key in [(fan_in, 'in_deg', 'cluster.fanIn'), (fan_out, 'out_deg', 'cluster.fanOut')]:
+        if candidates:
+            f = min(candidates, key=lambda f: (-f[direction], f['gid']))
+            parts.append(message(key, gid=str(f['gid']), incoming=f['in_deg'], outgoing=f['out_deg'],
+                                 inKzt=f"{f['in_kzt']:.2f}", outKzt=f"{f['out_kzt']:.2f}"))
+    parts.append(message('cluster.bridges', count=len(bridges)))
+    if bridges:
+        f, count = min(bridges, key=lambda pair: (-pair[1], pair[0]['gid']))
+        parts.append(message('cluster.bridgeExample', gid=str(f['gid']), communities=count,
+                             peers=f['cross_cluster_peers']))
+    if not fan_in and not fan_out and not bridges:
+        parts.append(message('cluster.noPattern'))
+    role_counts = Counter(f['role'] for f in members)
+    parts.append(message('cluster.roles', roles=', '.join(f'{role}={role_counts[role]}' for role in sorted(role_counts))))
+    parts.append(message('cluster.caveats', boundary=sum(f['boundary'] for f in members),
+                         seeds=sum(f['is_seed'] for f in members)))
+    return parts
+
+
+def cluster_description(members: list[dict], internal: list[tuple], graph: nx.DiGraph,
+                        membership: dict[int, int]) -> str:
+    return ' '.join(render(part) for part in cluster_description_parts(members, internal, graph, membership))
+
+
+def analyze(nodes: pd.DataFrame, edges: pd.DataFrame, tx: pd.DataFrame,
+            on_validated: Callable[[], None] | None = None) -> Analysis:
     tx = validate(nodes, edges, tx)
+    if on_validated:
+        on_validated()
     graph = build_graph(nodes, edges)
     membership = communities(graph)
     days: dict[int, set[str]] = {gid: set() for gid in graph}
@@ -197,7 +245,7 @@ def analyze(nodes: pd.DataFrame, edges: pd.DataFrame, tx: pd.DataFrame) -> Analy
             caveat += ' Seed inflow incomplete.'
         evidence = (f"Hypothesis: {role}; peers in/out={f['in_deg']}/{f['out_deg']}; "
                     f"KZT in/out={f['in_kzt']:.4g}/{f['out_kzt']:.4g}. {caveat}")
-        require(len(evidence) <= 200, 'Generated evidence exceeds 200 characters')
+        require(len(evidence) <= 200, 'validation.evidence')
         priority = round(sum(contributions.values()), 6)
         why = (f"{evidence} Priority={priority:.6f}: " + '; '.join(f'{k}={v:.6f}' for k, v in contributions.items()) +
                f". Rule: {rule} Neighbor communities={f['neighbor_clusters']}; "
@@ -211,10 +259,7 @@ def analyze(nodes: pd.DataFrame, edges: pd.DataFrame, tx: pd.DataFrame) -> Analy
     for cid in sorted(set(membership.values())):
         members = [f for f in ranked if f['cluster_id'] == cid]
         internal = [(a, b, d) for a, b, d in graph.edges(data=True) if membership[a] == cid == membership[b]]
-        role_counts = Counter(f['role'] for f in members)
-        shape = ', '.join(f'{role}={role_counts[role]}' for role in sorted(role_counts))
-        hypothesis = (f"Observed community hypothesis: {len(members)} accounts, {len(internal)} internal directed links; "
-                      f"{shape}; boundary={sum(f['boundary'] for f in members)}. Grouping is not proof of an organization.")
+        hypothesis = cluster_description(members, internal, graph, membership)
         clusters.append(dict(cluster_id=cid, n_nodes=len(members), n_seed=sum(f['is_seed'] for f in members),
             sum_kzt_internal=math.fsum(d['sum_kzt'] for _, _, d in internal),
             top_gids=[str(f['gid']) for f in members[:5]], hypothesis=hypothesis))
@@ -245,15 +290,24 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def run(data_dir: Path, out_dir: Path) -> tuple[Analysis, dict]:
+def run(data_dir: Path, out_dir: Path, progress: Callable[[str], None] | None = None) -> tuple[Analysis, dict]:
     started = time.perf_counter()
     started_utc = datetime.now(timezone.utc).isoformat()
     names = ['nodes.parquet', 'edges.parquet', 'transactions.parquet']
+    if progress:
+        progress('validating')
     # Hash before and after reading to reject changing inputs.
     hashes = {name: sha256(data_dir / name) for name in names}
-    frames = [pd.read_parquet(data_dir / name, engine='pyarrow') for name in names]
-    require(hashes == {name: sha256(data_dir / name) for name in names}, 'Inputs changed while reading')
-    result = analyze(*frames)
+    frames = []
+    for name in names:
+        try:
+            frames.append(pd.read_parquet(data_dir / name, engine='pyarrow'))
+        except (ValueError, OSError) as error:
+            raise ValidationError('validation.parquet', name=name) from error
+    require(hashes == {name: sha256(data_dir / name) for name in names}, 'validation.changed')
+    result = analyze(*frames, on_validated=(lambda: progress('analyzing')) if progress else None)
+    if progress:
+        progress('exporting')
     out_dir.mkdir(parents=True, exist_ok=True)
     payloads = {'nodes_roles.csv': result.nodes, 'clusters.csv': [dict(c, top_gids=json.dumps(c['top_gids'], separators=(',', ':'))) for c in result.clusters], 'top_nodes.csv': result.top}
     # Stage complete artifacts before replacing previous results; invalid inputs leave them untouched.
