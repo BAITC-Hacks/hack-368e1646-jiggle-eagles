@@ -26,3 +26,12 @@ The dashboard uses local JSON catalogs for English (`en`), Kazakh (`kk`, display
 - Acceptance: strict schemas and reconciliation; synthetic motifs and boundary counterexamples; all-node coverage including isolates; at least 20 ranked official accounts; byte-identical repeated CSV/JSON output; timed official run below 300 seconds; real HTTP and automated browser journey; existing root typecheck/tests/build. Remote CI remains a gap until a user-authorized push.
 
 - Local setup contract (ENG-03): `.python-version` pins the existing verified interpreter; setup creates or checks `.venv`, installs the unchanged exact requirements and verifies dependencies. Launch validates runtime/package versions without installing anything. CI uses the same setup and separate synthetic Python/browser checks. No application API or data semantics change.
+
+
+## Temporal analysis ownership (MG-TIME-01)
+
+For this user-requested change, the current Codex task is the sole integrator, implementer and acceptance owner. Ownership transfers for `money_graph/temporal.py`, `money_graph/pipeline.py`, `money_graph/static/app.js`, `money_graph/static/locales/en.json`, `money_graph/static/locales/ru.json`, `money_graph/static/locales/kk.json`, `tests/test_temporal.py`, `tests/browser_temporal.py`, the role fixture in `tests/test_money_graph.py`, `README.md`, `DISCLOSURES.md`, `docs/money-graph/methodology.md`, `docs/hackathon/requirements.md` and this file. No parallel agents or runtime dependency changes are involved.
+
+Additive account/dashboard JSON contract: `temporal` contains KZT amounts, nullable matched-incoming share, dated FIFO matches, independent same-day overlaps, and late-window incoming KZT as specified in methodology. Existing routes, errors, exact string IDs and CSV columns remain unchanged. Backend calculation and localized frontend presentation are integrated in this task; acceptance uses hand-computed temporal examples and the real browser/backend journey.
+
+The same sole-owner scope covers MG-PATTERN-01 and the selector update in `tests/browser_money_graph.py`. Account/dashboard JSON additionally exposes `patterns` message descriptors with raw numeric evidence; no endpoint or CSV-schema changes.

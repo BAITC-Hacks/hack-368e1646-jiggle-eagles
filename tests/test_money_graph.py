@@ -89,7 +89,8 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual([n['gid'] for n in result.top], [n['gid'] for n in sorted(result.nodes, key=lambda n: (-n['priority_score'], n['gid']))])
 
     def test_explicit_role_rules_and_scores(self):
-        f = dict(in_deg=0, out_deg=0, neighbor_clusters=0, observed_out_in_ratio=None, is_seed=False, depth=2)
+        f = dict(in_deg=0, out_deg=0, neighbor_clusters=0, observed_out_in_ratio=None, is_seed=False, depth=2,
+                 temporal={'matched_in_share': 1.0})
         cases = [
             ({'in_deg': 10, 'out_deg': 1}, 'consolidator', .9),
             ({'in_deg': 1, 'out_deg': 20}, 'distributor', .9),

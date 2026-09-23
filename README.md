@@ -118,7 +118,7 @@ All qualifying rules are evaluated:
 | `consolidator` | `I ≥ 3` and `I ≥ 2O` | `0.55 + 0.35 × min(I/10, 1)` |
 | `distributor` | `O ≥ 5` and `O ≥ 2I` | `0.55 + 0.35 × min(O/20, 1)` |
 | `coordinator` | `I ≥ 2`, `O ≥ 2`, `K ≥ 3` | `0.55 + 0.35 × min(K/6, 1)` |
-| `transit` | Non-seed; `I,O > 0`; `0.8 ≤ R ≤ 1.2` | `0.55 + 0.35 × (1 − abs(R−1)/0.2)` |
+| `transit` | Non-seed; `I,O > 0`; `0.8 ≤ R ≤ 1.2`; at least 80% of non-self incoming KZT allocated to outgoing amounts 1–2 calendar days later | `0.55 + 0.35 × (1 − abs(R−1)/0.2)` |
 | `terminal` | Non-seed; depth <4; `I > 0`, `O = 0` | `0.45 + 0.15 × min(I/5, 1)` |
 | `peripheral` | No other rule qualifies | `0.10` with no other peers, otherwise `0.20` |
 
@@ -211,7 +211,7 @@ flowchart LR
 
 ## Limitations and next scale
 
-The collection follows outgoing transfers from 81 seeds for four hops. Missing onward edges at depth four, missing external incoming flows, other banks and amounts below 5,000 KZT prevent complete flow/balance conclusions. No customer attributes are invented or externally enriched. No role ground truth exists; passing tests establishes implementation behavior, not AML accuracy. Transit ratios do not prove the same money moved onward. Terminal, coordinator and community labels require independent investigation. The dedicated cluster browser, advanced filters and transaction viewer are deferred. This small version does not perform temporal matching, sensitivity analysis or full-network force-layout visualization.
+The collection follows outgoing transfers from 81 seeds for four hops. Missing onward edges at depth four, missing external incoming flows, other banks and amounts below 5,000 KZT prevent complete flow/balance conclusions. No customer attributes are invented or externally enriched. No role ground truth exists; passing tests establishes implementation behavior, not AML accuracy. Transit ratios do not prove the same money moved onward. Terminal, coordinator and community labels require independent investigation. The dedicated cluster browser, advanced filters and transaction viewer are deferred. This version performs day-level FIFO temporal allocation; it does not trace fund identity, perform sensitivity analysis or provide full-network force-layout visualization.
 
 For roughly one million nodes, replace in-memory pandas/NetworkX with columnar scans, compact graph storage and partitioned/approximate algorithms. Index account neighborhoods on disk and serve bounded results; avoid loading all results into RAM or a browser. Reassess community stability, thresholds, runtime and memory on representative data. The current benchmark does not establish performance at that scale.
 
@@ -220,3 +220,10 @@ A five-minute walkthrough: reproduce, show the three exports, inspect a high-pri
 ## Sources and attribution
 
 The [official specification](https://docs.google.com/document/d/1JPLU-G6R25Ge2hVaY2J9cqvrx7FGExj87XKwJPaMz3o/edit?usp=sharing), [dataset README](https://drive.google.com/file/d/1ro-SiY042jv7De0h7tXBDyY8ZKdHz_US/view?usp=sharing) and [organizer Python starter](https://drive.google.com/file/d/1EnMGG22jSH7Mvgt396kKRi3bjAobsomN/view?usp=sharing) were inspected September 23, 2026. This implementation extends the starter's load/DiGraph/flow-feature/export structure, fixing isolate omission and adding validation, rules, clustering, ranking and viewing. See [DISCLOSURES.md](DISCLOSURES.md) for dependency licenses and AI/tool assistance.
+
+
+### Temporal evidence and coexisting patterns
+
+Each account card shows dated FIFO allocations to spending 1–2 calendar days after receipt, same-day ambiguity separately, and a warning for incomplete follow-up at the end of July. Transit now additionally requires at least 80% of non-self incoming amounts matched in that window. The temporal gate is a heuristic, not a probability or proof of fund identity.
+
+The “Observed patterns” block can show collection from many, fast transit and distribution together, with numerical evidence. Patterns are independent of the winning primary role; fast transit here only requires temporal coverage, not monthly balance or non-seed status. CSVs retain their required single role and schemas. See methodology for exact rules and non-additive same-day semantics.

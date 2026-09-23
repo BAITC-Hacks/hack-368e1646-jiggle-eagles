@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 
 from .i18n import message, render
+from .temporal import MIN_SHARE, WINDOW_DAYS, empty_temporal, temporal_features
 
 SCHEMAS = {
     'nodes_roles.csv': ['gid', 'role', 'role_score', 'cluster_id', 'priority_score', 'evidence'],
@@ -36,7 +37,9 @@ WARNINGS = [
     'Observed flows are not complete balances. Incoming transfers outside the sample are unobserved.',
     'July 2026, intra-bank transfers only, at least 5,000 KZT. Smaller transfers and other banks are absent.',
 ]
-CONFIG = {'rules_version': 1, 'cluster_description_version': 2, 'louvain_seed': 42, 'resolution': 1.0, 'threshold': 1e-7,
+CONFIG = {'rules_version': 2, 'patterns_version': 1, 'temporal_method': 'daily_fifo_strict_future',
+          'temporal_window_days': WINDOW_DAYS, 'temporal_min_in_share': MIN_SHARE,
+          'cluster_description_version': 2, 'louvain_seed': 42, 'resolution': 1.0, 'threshold': 1e-7,
           'amount_absolute_tolerance_kzt': 0.01, 'amount_relative_tolerance': 1e-12}
 
 
@@ -148,7 +151,9 @@ def assign_role(f: dict) -> tuple[str, float, str, list[dict]]:
         add('consolidator', .55 + .35 * min(i / 10, 1), render(message('rule.consolidator')))
     if o >= 5 and o >= 2 * i:
         add('distributor', .55 + .35 * min(o / 20, 1), render(message('rule.distributor')))
-    if not f['is_seed'] and i > 0 and o > 0 and ratio is not None and .8 <= ratio <= 1.2:
+    temporal_share = f['temporal']['matched_in_share']
+    if (not f['is_seed'] and i > 0 and o > 0 and ratio is not None and .8 <= ratio <= 1.2
+            and temporal_share is not None and temporal_share >= MIN_SHARE):
         add('transit', .55 + .35 * max(0, 1 - abs(ratio - 1) / .2), render(message('rule.transit')))
     if f['depth'] < 4 and not f['is_seed'] and i > 0 and o == 0:
         add('terminal', .45 + .15 * min(i / 5, 1), render(message('rule.terminal')))
@@ -200,6 +205,19 @@ def cluster_description(members: list[dict], internal: list[tuple], graph: nx.Di
     return ' '.join(render(part) for part in cluster_description_parts(members, internal, graph, membership))
 
 
+def observed_patterns(f: dict) -> list[dict]:
+    """Independent measured behaviors; no competition or inferred fund identity."""
+    patterns = []
+    if f['in_deg'] >= 3 and f['in_deg'] >= 2 * f['out_deg']:
+        patterns.append(message('pattern.collection', incoming=f['in_deg'], outgoing=f['out_deg']))
+    share = f['temporal']['matched_in_share']
+    if share is not None and share >= MIN_SHARE:
+        patterns.append(message('pattern.transit', amount=f['temporal']['matched_kzt'], share=share))
+    if f['out_deg'] >= 5 and f['out_deg'] >= 2 * f['in_deg']:
+        patterns.append(message('pattern.distribution', incoming=f['in_deg'], outgoing=f['out_deg']))
+    return patterns
+
+
 def analyze(nodes: pd.DataFrame, edges: pd.DataFrame, tx: pd.DataFrame,
             on_validated: Callable[[], None] | None = None) -> Analysis:
     tx = validate(nodes, edges, tx)
@@ -207,6 +225,7 @@ def analyze(nodes: pd.DataFrame, edges: pd.DataFrame, tx: pd.DataFrame,
         on_validated()
     graph = build_graph(nodes, edges)
     membership = communities(graph)
+    temporal = temporal_features(tx)
     days: dict[int, set[str]] = {gid: set() for gid in graph}
     for r in tx.itertuples(index=False):
         day = r.date.date().isoformat()
@@ -228,9 +247,10 @@ def analyze(nodes: pd.DataFrame, edges: pd.DataFrame, tx: pd.DataFrame,
             observed_out_in_ratio=outflow / inflow if inflow > 0 else None,
             boundary=attrs['depth'] == 4, active_days=len(days[gid]),
             first_date=min(days[gid]) if days[gid] else None, last_date=max(days[gid]) if days[gid] else None,
-            self_transfer=graph.has_edge(gid, gid)))
+            self_transfer=graph.has_edge(gid, gid), temporal=temporal.get(gid, empty_temporal())))
     max_volume = max(f['in_kzt'] + f['out_kzt'] for f in features)
     for f in features:
+        f['patterns'] = observed_patterns(f)
         role, score, rule, candidates = assign_role(f)
         volume = f['in_kzt'] + f['out_kzt']
         contributions = {
@@ -245,11 +265,15 @@ def analyze(nodes: pd.DataFrame, edges: pd.DataFrame, tx: pd.DataFrame,
             caveat += ' Seed inflow incomplete.'
         evidence = (f"Hypothesis: {role}; peers in/out={f['in_deg']}/{f['out_deg']}; "
                     f"KZT in/out={f['in_kzt']:.4g}/{f['out_kzt']:.4g}. {caveat}")
+        if role == 'transit':
+            evidence += f" 1-2d matched={f['temporal']['matched_in_share']:.1%} in."
         require(len(evidence) <= 200, 'validation.evidence')
         priority = round(sum(contributions.values()), 6)
         why = (f"{evidence} Priority={priority:.6f}: " + '; '.join(f'{k}={v:.6f}' for k, v in contributions.items()) +
                f". Rule: {rule} Neighbor communities={f['neighbor_clusters']}; "
-               f"cross-community peers={f['cross_cluster_peers']}; transactions in/out={f['in_tx']}/{f['out_tx']}.")
+               f"cross-community peers={f['cross_cluster_peers']}; transactions in/out={f['in_tx']}/{f['out_tx']}. "
+               f"FIFO 1-2d KZT={f['temporal']['matched_kzt']:.6f}; "
+               f"same-day overlap (not additive; order unknown) KZT={f['temporal']['same_day_overlap_kzt']:.6f}.")
         f.update(role=role, role_score=score, role_rule=rule, candidates=candidates, priority_score=priority,
                  priority_contributions=contributions, evidence=evidence, why=why)
     ranked = sorted(features, key=lambda f: (-f['priority_score'], f['gid']))

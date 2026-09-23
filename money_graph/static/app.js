@@ -116,6 +116,46 @@ function renderAccount(reset = false) {
   $('evidence').textContent = currentLocale() === 'en' ? a.evidence : t('evidence.summary', {
     role: role(a.role), incoming: number(a.in_deg), outgoing: number(a.out_deg),
     inKzt: number(a.in_kzt), outKzt: number(a.out_kzt), caveat: t(warningKey)});
+  let patterns = $('patterns');
+  if (!patterns) {
+    patterns = element('section');
+    patterns.id = 'patterns';
+    $('evidence').after(patterns);
+  }
+  patterns.replaceChildren(element('h3', t('pattern.title')));
+  const patternList = element('ul');
+  for (const part of a.patterns) {
+    const params = Object.fromEntries(Object.entries(part.params).map(([key, value]) =>
+      [key, key === 'share' ? number(value, {style: 'percent', maximumFractionDigits: 1}) : number(value)]));
+    const item = element('li', t(part.key, params));
+    item.dataset.pattern = part.key;
+    patternList.append(item);
+  }
+  patterns.append(a.patterns.length ? patternList : element('p', t('pattern.none')),
+    element('p', t('pattern.caveat'), 'muted'));
+  let temporal = $('temporal');
+  if (!temporal) {
+    temporal = element('section');
+    temporal.id = 'temporal';
+    patterns.after(temporal);
+  }
+  const tf = a.temporal;
+  temporal.replaceChildren(element('h3', t('temporal.title')),
+    element('p', t('temporal.matched', {
+      amount: number(tf.matched_kzt), day1: number(tf.matched_day1_kzt), day2: number(tf.matched_day2_kzt),
+      share: tf.matched_in_share === null ? t('scoring.undefined') : number(tf.matched_in_share, {style: 'percent', maximumFractionDigits: 1})})),
+    element('p', t('temporal.sameDay', {amount: number(tf.same_day_overlap_kzt)})),
+    element('p', t('temporal.caveat'), 'muted'));
+  if (tf.end_window_incoming_kzt > 0) temporal.append(element('p', t('temporal.endWindow', {amount: number(tf.end_window_incoming_kzt)}), 'warning'));
+  const details = element('details');
+  details.append(element('summary', t('temporal.details')));
+  const allocations = element('ul');
+  for (const match of tf.matches) allocations.append(element('li', t('temporal.match', {
+    incoming: date(match.in_date), outgoing: date(match.out_date), amount: number(match.amount_kzt), days: number(match.lag_days)})));
+  for (const overlap of tf.same_day) allocations.append(element('li', t('temporal.overlap', {
+    date: date(overlap.date), amount: number(overlap.amount_kzt)})));
+  details.append(allocations);
+  temporal.append(details);
   const scoring = $('scoring');
   scoring.replaceChildren(element('p', t('scoring.ratio', {
     ratio: a.observed_out_in_ratio === null ? t('scoring.undefined') : number(a.observed_out_in_ratio)})));

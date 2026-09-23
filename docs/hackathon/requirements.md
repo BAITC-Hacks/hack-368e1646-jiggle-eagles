@@ -78,6 +78,18 @@ Minimum role dictionary: `consolidator`, `transit`, `distributor`, `terminal`, `
 
 - The actual data contract, archive/starter hashes, float tolerance and component reconciliation are in [data profile](data-profile.md).
 - The [README](../../README.md) documents adopted rules, confidence, priority, deterministic ordering, exact-ID CSV/JSON serialization and community parameters. Requirements files pin runtime/test versions; [disclosures](../../DISCLOSURES.md) identify sources and licenses.
-- The user requested a small local version: no application LLM, model training, database, authentication or cloud dependency. Optional temporal matching, cycle analysis and sensitivity checks are not implemented.
+- The user requested a small local version: no application LLM, model training, database, authentication or cloud dependency. Day-level temporal matching is implemented under MG-TIME-01; cycle analysis and sensitivity checks are not implemented.
 - Local completeness, runtime, deterministic output and browser behavior are verified; role accuracy is unmeasured because ground truth is absent. A separate-machine setup rehearsal, remote CI and the live organizer presentation remain unperformed.
 - The user/team captain retains ownership of reviewer data access, current event rules and submission. Working inputs/results use ignored `data/private/`; existing reference Parquet copies under `docs/my-docs/data/` are tracked and were preserved. No push, additional redistribution or public hosting is part of this setup change.
+
+
+## Temporal transit evidence (MG-TIME-01)
+
+User requirement: distinguish later spending within 1–2 days from earlier spending, prohibit repeated use of amounts, and report same-day ambiguity separately. `money_graph/temporal.py` allocates non-self daily amounts FIFO; `pipeline.py` gates the existing transit rule on matched incoming share >=0.8. The 0.8 gate is an explicit implementation heuristic, not an organizer threshold or a calibrated probability. Other role formulas and priority weights are unchanged. Account JSON and dashboard JSON gain a `temporal` object; official CSV columns are unchanged, with temporal evidence in transit evidence and ranking explanations. The UI exposes matched amounts, dates, same-day ambiguity and the observation-end warning in all three languages.
+
+Acceptance: earlier/same-day/three-day spending cannot establish transit; one/two-day spending can; incoming and outgoing capacity cannot be reused; partial allocations, duplicates, fractions, shuffled rows, self-transfers, isolates and month-end incompleteness are covered by `tests/test_temporal.py`. `tests/browser_temporal.py` checks the real account journey and translated evidence. AML accuracy remains unmeasured.
+
+
+## Coexisting observed patterns (MG-PATTERN-01)
+
+User requirement: retain one primary role in the mandatory CSV, while the account card shows simultaneous collection, fast-transit and distribution patterns. `pipeline.py:observed_patterns` computes independent descriptors in account/dashboard `patterns`: collection requires incoming peers >=3 and >=2x outgoing; distribution requires outgoing peers >=5 and >=2x incoming; fast transit requires FIFO 1–2-day matched non-self incoming share >=80%. Fast transit as a pattern does not require monthly balance or non-seed status; it describes measured timing even when those role prerequisites fail. All collection/boundary caveats remain. No role, confidence or priority calculation changes from MG-TIME-01; CSV schemas remain exact. EN/RU/KK cards show each matching pattern with numbers or an explicit no-threshold-met state. Tests cover coexisting collection/transit and distribution/transit, seed/monthly-ratio independence, same-day exclusion, numerical evidence and the real browser card.

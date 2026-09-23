@@ -279,7 +279,7 @@ class BrowserJourney(unittest.TestCase):
                     expect(page.locator('#graph-caption')).to_contain_text('2 hops')
                     page.locator('#zoom-in').click()
                     page.locator('#color-mode').select_option('cluster')
-                    page.locator('.account details').evaluate('(node) => {node.open = true}')
+                    page.locator('.account > details').evaluate('(node) => {node.open = true}')
                     transform = page.locator('#graph-viewport').get_attribute('transform')
                     edges = page.locator('.edge').count()
                     csvs = {name: page.request.get(base + '/exports/' + name).body()
@@ -304,7 +304,7 @@ class BrowserJourney(unittest.TestCase):
                         expect(page.locator('#zoom-in')).to_have_attribute('aria-label', {'en': 'Zoom in', 'kk': 'Үлкейту', 'ru': 'Увеличить'}[locale])
                         expect(page.locator('#gid')).to_have_value('unsent-search')
                         expect(page.locator('#color-mode')).to_have_value('cluster')
-                        self.assertTrue(page.locator('.account details').evaluate('(node) => node.open'))
+                        self.assertTrue(page.locator('.account > details').evaluate('(node) => node.open'))
                         self.assertEqual(page.locator('#graph-viewport').get_attribute('transform'), transform)
                         self.assertEqual(page.locator('.edge').count(), edges)
                         for name in ['nodes', 'edges', 'transactions']:
