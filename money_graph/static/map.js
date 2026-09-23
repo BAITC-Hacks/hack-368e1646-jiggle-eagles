@@ -2,8 +2,9 @@
 // Horizontal = distinct paying counterparties, vertical = distinct paid counterparties.
 import {t, number} from './i18n.js';
 
-export const roleColors = {consolidator: '#087e8b', transit: '#527bc2', distributor: '#d98839',
-  terminal: '#9b5bb5', coordinator: '#c95c72', peripheral: '#93a3a1'};
+export const roleColors = Object.fromEntries(
+  ['consolidator', 'transit', 'distributor', 'terminal', 'coordinator', 'peripheral']
+    .map(role => [role, `var(--role-${role})`]));
 export const roleOrder = ['coordinator', 'consolidator', 'distributor', 'transit', 'terminal', 'peripheral'];
 // Full identifiers are 18 digits; a tail is enough to recognise one and keeps labels readable.
 export const shortId = (gid) => '…' + String(gid).slice(-6);
@@ -209,11 +210,11 @@ export function render() {
     if (lit) {shown++; visible.push(point);}
     const circle = svg('circle', {cx: point.x.toFixed(1), cy: point.y.toFixed(1),
       r: (lit ? radiusOf(node) : Math.min(2.4, radiusOf(node))).toFixed(1),
-      fill: lit ? roleColors[node.role] : '#c3cfcf', 'fill-opacity': lit ? 0.82 : 0.3});
+      fill: lit ? roleColors[node.role] : 'var(--graph-edge)', 'fill-opacity': lit ? 0.82 : 0.35});
     if (lit) {
       circle.setAttribute('data-gid', node.gid);
       circle.setAttribute('class', 'point');
-      if (node.is_seed) {circle.setAttribute('stroke', '#10333f'); circle.setAttribute('stroke-width', '1.3');}
+      if (node.is_seed) {circle.setAttribute('stroke', 'var(--text)'); circle.setAttribute('stroke-width', '1.3');}
       points.append(circle);
     } else {
       circle.setAttribute('class', 'point faded');

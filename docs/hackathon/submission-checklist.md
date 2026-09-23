@@ -20,7 +20,7 @@ Confirm the current deadline, required repository/branch and submission mechanis
 - [ ] README includes the actual command, role and priority formulas/thresholds, output examples, limitations and scaling to about one million nodes.
 - [ ] [Architecture diagram](../money-graph/architecture.md) reflects the final implementation (MG-09).
 - [ ] Root typecheck/tests/build pass; the automated main browser journey passes; final CI is checked or explicitly recorded as unavailable (ENG-01–ENG-02).
-- [ ] [Disclosures](../../DISCLOSURES.md) cover actual sources, reused starter code, dependencies and AI assistance. No data, keys or unsupported claims enter the repository or images.
+- [ ] [Disclosures](../../disclosures/README.md) cover actual sources, reused starter code, dependencies and AI assistance. No data, keys or unsupported claims enter the repository or images.
 
 ## Five-minute demo
 

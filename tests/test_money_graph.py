@@ -15,7 +15,7 @@ from urllib.request import Request, urlopen
 import pandas as pd
 
 from money_graph.pipeline import SCHEMAS, ValidationError, analyze, assign_role, run, validate
-from money_graph.server import MAX_UPLOAD_BYTES, NODE_LIMIT, Snapshot, make_server, parse_upload
+from money_graph.server import MAX_UPLOAD_BYTES, NODE_LIMIT, Snapshot, make_server, parse_upload, saved_analysis
 
 BASE = 9007199254740993  # Beyond JavaScript's exact Number range.
 
@@ -212,6 +212,167 @@ class PipelineTests(unittest.TestCase):
 
 
 class HttpTests(unittest.TestCase):
+    def test_edit_analysis_details_validation_atomicity_and_restart(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write_fixture(root / 'input')
+            result, _ = run(root / 'input', root / 'out')
+            upload_id = 'a' * 32
+            run(root / 'input', root / 'out' / 'uploads' / upload_id / 'output')
+            title, description = 'Шілде · Проверка <sample>', 'First line\nSecond line'
+            for restarting in (False, True):
+                with make_server(None if restarting else result, root / 'out', 0) as server:
+                    thread = threading.Thread(target=server.serve_forever, daemon=True)
+                    thread.start()
+                    base = f'http://127.0.0.1:{server.server_port}'
+                    def get(route):
+                        with urlopen(base + route) as response:
+                            return response.read()
+                    def edit(value, revision=upload_id, origin=base, content_type='application/json'):
+                        body = value if isinstance(value, bytes) else json.dumps(value).encode()
+                        return urlopen(Request(base + f'/api/analyses/{revision}/details', data=body,
+                            headers={'Origin': origin, 'Content-Type': content_type}))
+                    try:
+                        history = {entry['id']: entry for entry in json.loads(get('/api/analyses'))['analyses']}
+                        self.assertEqual(history[upload_id]['title'], title if restarting else None)
+                        self.assertEqual(history[upload_id]['description'], description if restarting else '')
+                        if restarting:
+                            self.assertEqual(history['startup']['title'], 'Startup review')
+                            with edit({'title': title}) as response:
+                                self.assertEqual(json.load(response)['description'], '')
+                            continue
+                        routes = ['/api/overview', *['/exports/' + name for name in [*SCHEMAS, 'run_manifest.json']]]
+                        original = {route: get(route) for route in routes}
+                        with edit({'title': '  ' + title + '  ', 'description': '\n' + description + '\n'}) as response:
+                            entry = json.load(response)
+                            self.assertEqual((entry['title'], entry['description']), (title, description))
+                            self.assertEqual(entry['id'], upload_id)
+                            self.assertEqual(entry['dataset_fingerprint'], history[upload_id]['dataset_fingerprint'])
+                        with edit({'title': 'Startup review', 'description': ''}, revision='startup') as response:
+                            self.assertEqual(response.status, 200)
+                        for invalid in [None, [], {}, {'title': 1}, {'title': ' '}, {'title': 'x' * 121},
+                                {'title': 'two\nlines'}, {'title': 'ok', 'description': None},
+                                {'title': 'ok', 'description': 'x' * 2001}, {'title': '\ud800'},
+                                {'title': 'ok', 'unknown': 'value'}, b'not json']:
+                            with self.subTest(invalid=repr(invalid)[:60]), self.assertRaises(HTTPError) as caught:
+                                edit(invalid)
+                            self.assertEqual(caught.exception.code, 400)
+                            caught.exception.close()
+                        for revision, origin, content_type, body, code in [
+                                ('0' * 32, base, 'application/json', {'title': 'ok'}, 404),
+                                ('../startup', base, 'application/json', {'title': 'ok'}, 404),
+                                (upload_id, 'http://example.invalid', 'application/json', {'title': 'ok'}, 403),
+                                (upload_id, base, 'text/plain', {'title': 'ok'}, 415),
+                                (upload_id, base, 'application/json', b'x' * 16385, 413)]:
+                            with self.assertRaises(HTTPError) as caught:
+                                edit(body, revision, origin, content_type)
+                            self.assertEqual(caught.exception.code, code)
+                            caught.exception.close()
+                        details_path = root / 'out' / 'uploads' / upload_id / 'output' / 'analysis_details.json'
+                        saved = details_path.read_bytes()
+                        with patch('money_graph.server.Path.replace', side_effect=OSError('synthetic disk failure')):
+                            with self.assertRaises(HTTPError) as caught:
+                                edit({'title': 'Unsaved change'})
+                            self.assertEqual(caught.exception.code, 500)
+                            caught.exception.close()
+                        self.assertEqual(details_path.read_bytes(), saved)
+                        for route, body in original.items():
+                            self.assertEqual(get(route), body)
+                    finally:
+                        server.shutdown()
+                        thread.join()
+            # A later CLI startup result must not inherit a prior run's title.
+            run(root / 'input', root / 'out')
+            self.assertIsNone(saved_analysis(root / 'out', 'startup')['title'])
+            self.assertEqual(saved_analysis(root / 'out' / 'uploads' / upload_id / 'output', upload_id)['title'], title)
+
+    def test_saved_analysis_history_duplicates_restart_and_safe_reopen(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write_fixture(root / 'first')
+            write_fixture(root / 'second', expansion_fixture())
+            result, _ = run(root / 'first', root / 'out')
+            saved_ids, original = [], {}
+            for restarting in (False, True):
+                with make_server(None if restarting else result, root / 'out', 0) as server:
+                    thread = threading.Thread(target=server.serve_forever, daemon=True)
+                    thread.start()
+                    base = f'http://127.0.0.1:{server.server_port}'
+                    def get(route):
+                        with urlopen(base + route) as response:
+                            return response.read()
+                    def select(revision, origin=base, body=b''):
+                        return urlopen(Request(base + f'/api/analyses/{revision}/open', data=body,
+                                               headers={'Origin': origin}))
+                    try:
+                        if not restarting:
+                            history = json.loads(get('/api/analyses'))['analyses']
+                            self.assertEqual([entry['id'] for entry in history], ['startup'])
+                            self.assertTrue(history[0]['active'])
+                            for directory in ('first', 'second', 'first'):
+                                body, content_type = upload_body(root / directory)
+                                with urlopen(Request(base + '/api/analysis', data=body,
+                                        headers={'Origin': base, 'Content-Type': content_type})) as response:
+                                    self.assertEqual(response.status, 202)
+                                server.worker.join(10)
+                                self.assertFalse(server.worker.is_alive())
+                                status = json.loads(get('/api/status'))
+                                self.assertEqual(status['state'], 'succeeded')
+                                saved_ids.append(status['revision'])
+                                if len(saved_ids) == 1:
+                                    original = {route: get(route) for route in [
+                                        '/api/overview', f'/api/account?gid={BASE}',
+                                        f'/api/graph?gid={BASE}&hops=2',
+                                        *['/exports/' + name for name in [*SCHEMAS, 'run_manifest.json']]]}
+                            self.assertEqual(len(set(saved_ids)), 3)
+                        else:
+                            self.assertIsNone(json.loads(get('/api/status'))['revision'])
+                        history = json.loads(get('/api/analyses'))['analyses']
+                        self.assertEqual([entry['id'] for entry in history], [*reversed(saved_ids), 'startup'])
+                        by_id = {entry['id']: entry for entry in history}
+                        self.assertEqual(by_id[saved_ids[0]]['duplicate_of'], 'startup')
+                        self.assertEqual(by_id[saved_ids[2]]['duplicate_of'], 'startup')
+                        self.assertIsNone(by_id[saved_ids[1]]['duplicate_of'])
+                        self.assertEqual(by_id[saved_ids[1]]['profile']['nodes'], 80)
+                        self.assertEqual(by_id[saved_ids[0]]['dataset_fingerprint'], by_id[saved_ids[2]]['dataset_fingerprint'])
+                        with patch('money_graph.server.run', side_effect=AssertionError('Reopen must not recalculate')):
+                            with select(saved_ids[0]) as response:
+                                self.assertEqual(response.status, 200)
+                        for route, body in original.items():
+                            self.assertEqual(get(route), body, route)
+                        active = [entry['id'] for entry in json.loads(get('/api/analyses'))['analyses'] if entry['active']]
+                        self.assertEqual(active, [saved_ids[0]])
+                        with self.assertRaises(HTTPError) as stale:
+                            get(f'/api/account?gid={BASE}&revision={saved_ids[1]}')
+                        self.assertEqual(stale.exception.code, 409)
+                        stale.exception.close()
+                        for revision, origin, body, code in [
+                                (saved_ids[1], 'http://example.invalid', b'', 403),
+                                ('0' * 32, base, b'', 404), ('../startup', base, b'', 404),
+                                (saved_ids[1], base, b'nonempty', 400)]:
+                            with self.subTest(revision=revision, code=code), self.assertRaises(HTTPError) as caught:
+                                select(revision, origin, body)
+                            self.assertEqual(caught.exception.code, code)
+                            caught.exception.close()
+                        if restarting:
+                            # Damaged saved exports must never partially replace current results.
+                            (root / 'out' / 'uploads' / saved_ids[1] / 'output' / 'nodes_roles.csv').write_bytes(b'damaged')
+                            with self.assertRaises(HTTPError) as caught:
+                                select(saved_ids[1])
+                            self.assertEqual(caught.exception.code, 422)
+                            caught.exception.close()
+                            for route, body in original.items():
+                                self.assertEqual(get(route), body)
+                            corrupt = root / 'out' / 'uploads' / ('f' * 32) / 'output'
+                            corrupt.mkdir(parents=True)
+                            (corrupt / 'run_manifest.json').write_text('{}')
+                            history = json.loads(get('/api/analyses'))
+                            self.assertEqual(history['unavailable_count'], 1)
+                            self.assertEqual(len(history['analyses']), 4)
+                    finally:
+                        server.shutdown()
+                        thread.join()
+
     def test_upload_requires_three_named_nonempty_files_and_preserves_bytes(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary)
@@ -240,6 +401,12 @@ class HttpTests(unittest.TestCase):
                 thread.start()
                 base = f'http://127.0.0.1:{server.server_port}'
                 try:
+                    for route in ('/', '/analyses', '/analyses/startup', '/analyses/' + 'a' * 32):
+                        with urlopen(base + route) as response:
+                            self.assertEqual(response.headers.get_content_type(), 'text/html')
+                            page = response.read()
+                            self.assertIn(b'src="/file-preview.js"', page)
+                            self.assertIn(b'href="/style.css"', page)
                     with urlopen(base + '/api/account?gid=' + str(BASE)) as response:
                         data = json.load(response)
                         self.assertEqual(data['account']['gid'], str(BASE))
@@ -249,7 +416,8 @@ class HttpTests(unittest.TestCase):
                         self.assertIn(str(BASE).encode(), response.read())
                     for route, status in [('/api/account?gid=missing', 400), ('/api/account?gid=1', 404),
                                           ('/api/account?gid=9223372036854775808', 400),
-                                          ('/api/account?gid=1&gid=2', 400), ('/../pipeline.py', 404)]:
+                                          ('/api/account?gid=1&gid=2', 400), ('/../pipeline.py', 404),
+                                          ('/analyses/invalid', 404), ('/analyses/startup/more', 404)]:
                         with self.subTest(route=route), self.assertRaises(HTTPError) as caught:
                             urlopen(base + route)
                         self.assertEqual(caught.exception.code, status)
@@ -328,6 +496,10 @@ class HttpTests(unittest.TestCase):
                                 post(root / 'upload')
                             self.assertEqual(caught.exception.code, 409)
                             caught.exception.close()
+                            with self.assertRaises(HTTPError) as caught:
+                                urlopen(Request(base + '/api/analyses/startup/open', data=b'', headers={'Origin': base}))
+                            self.assertEqual(caught.exception.code, 409)
+                            caught.exception.close()
                         finally:
                             release.set()
                         status = finished()
@@ -373,6 +545,7 @@ class HttpTests(unittest.TestCase):
                         self.assertEqual(caught.exception.code, code)
                         caught.exception.close()
                     self.assertEqual(len(list((root / 'output' / 'uploads').iterdir())), 1)
+                    self.assertEqual(len(json.loads(get('/api/analyses'))['analyses']), 2)
                 finally:
                     server.shutdown()
                     thread.join()
@@ -387,10 +560,20 @@ class StaticAssetTests(unittest.TestCase):
         return re.findall(r'<script\b([^>]*)>', markup)
 
     def test_index_loads_the_dashboard_script(self):
-        srcs = [re.search(r'src="([^"]+)"', tag).group(1) for tag in self.scripts()]
-        self.assertIn('app.js', [src.rsplit('/', 1)[-1] for src in srcs],
-                      'index.html must load app.js; without it the upload inputs, '
-                      'analyse button, search and language selector have no listeners.')
+        """index.html must reach app.js, directly or through a script it loads.
+
+        A plain <script src="app.js"> would also be fetched when index.html is opened from disk,
+        which the file-preview journey forbids: that page must make no requests and show no
+        controls. So index.html loads file-preview.js, which injects app.js on the http origin
+        only. Either arrangement satisfies the guarantee this test exists for.
+        """
+        names = [re.search(r'src="([^"]+)"', tag).group(1).rsplit('/', 1)[-1] for tag in self.scripts()]
+        loaders = [name for name in names if (self.STATIC / name).is_file()]
+        reached = 'app.js' in names or any(
+            'app.js' in (self.STATIC / name).read_text(encoding='utf-8') for name in loaders)
+        self.assertTrue(reached,
+                        'index.html must load app.js itself or through a script it loads; without it '
+                        'the upload inputs, analyse button, search and language selector have no listeners.')
 
     def test_referenced_scripts_exist(self):
         for tag in self.scripts():

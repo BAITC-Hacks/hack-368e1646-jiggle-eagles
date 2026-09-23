@@ -1,33 +1,116 @@
 # Money Graph — HackAlem AI
 
-A small, local AML investigation dashboard for the **Freedom / Finance** task, by **Jiggle Eagles**. Python, pandas and NetworkX turn the organizer's three Parquet files into explainable role hypotheses, communities and a review queue. Findings are **hypotheses for human investigation, never accusations**.
+**An explainable, local transaction-network investigation dashboard by Jiggle Eagles**, built for the Freedom / Finance hackathon task.
 
-Minimal v2 adds dashboard Parquet uploads with validation/status, bounded two-hop exploration and measured community descriptions to the all-node graph, six existing role rules, reproducible communities, three official CSVs and exact client-ID search. It has no application LLM, training, database, authentication or cloud dependency. The existing Node/React connectivity starter is retained separately; it is not needed to run Money Graph.
+Bank anti-money-laundering (AML) analysts need to decide which accounts to review first and understand how money moves through a sampled network. Money Graph turns three Parquet files into a directed graph, six structural role hypotheses, communities, an explained review queue, and downloadable results. Analysts can search an exact client ID and inspect the measurements behind each conclusion.
+
+**Roles, scores, and communities are hypotheses for human investigation, never accusations.** Observed transfers do not establish complete account balances or prove wrongdoing.
+
+For a first run, follow [Setup](#setup), then the [reproducible judge walkthrough](#reproducible-judge-walkthrough). The main application is Python; the repository also retains a [separate Node/React starter](#legacy-node-starter).
+
+## What has been implemented
+
+- **Validated local analysis:** load `nodes.parquet`, `edges.parquet`, and `transactions.parquet`; check schemas, IDs, dates, amounts, and agreement between transactions and aggregated edges.
+- **Complete account coverage:** preserve every supplied node, including isolates, and assign a role, confidence score, community, priority, and readable evidence.
+- **Explainable results:** six documented role rules, separate priority contributions, deterministic Louvain communities, and measured fan-in, fan-out, and potential bridging descriptions.
+- **Investigation dashboard:** exact client-ID search, ranked review queue, account details, role/community coloring, payer → recipient arrows, and one- or two-hop graph exploration with zoom and pan.
+- **Uploads and saved analyses:** processing status, safe publication after success, persistent local history, editable titles/descriptions, duplicate-file labels, and reopening of saved results after hash verification.
+- **Reproducible exports:** the three required CSVs, supplementary dashboard JSON, and a manifest containing hashes, algorithm settings, versions, and timing.
+- **Interface preferences:** English, Kazakh, and Russian; Light, Dark, and System themes; separate Analyses and Results views and layouts for narrow screens.
+
+## How the solution works
+
+1. **Provide inputs:** upload the three files in the browser or point the CLI at a directory containing them.
+2. **Validate and build:** reconcile individual transfers with edge aggregates, then insert all accounts and directed payer → recipient connections into the graph.
+3. **Calculate:** measure observed flows and counterparties, find communities, evaluate role rules, and calculate each account's investigation priority.
+4. **Review:** open the results, choose an account from the queue or search by ID, inspect its explanation, and explore its neighborhood and community.
+5. **Export or revisit:** download the CSVs and manifest, edit the saved analysis details, or reopen a previous analysis without recalculating it.
+
+The CLI and browser uploads use the same calculation pipeline. An unsuccessful upload leaves the currently selected analysis and its downloads available.
+
+## Technologies
+
+| Component | Technologies and purpose |
+| --- | --- |
+| Analysis | Python; pandas and PyArrow for Parquet/data frames; NumPy for numeric validation; NetworkX for directed graphs and Louvain communities |
+| Local backend | Python standard-library HTTP server, threading, JSON, filesystem storage, and SHA-256 hashing |
+| Dashboard | HTML, CSS, plain JavaScript modules, and SVG; local JSON translation catalogs and browser locale formatting |
+| Verification | Python `unittest`, Playwright with Chromium for browser tests, and GitHub Actions configuration |
+| Retained starter | TypeScript, Node.js, React, Vite, Tailwind CSS, Express, Zod, and an optional OpenAI SDK helper; a Dockerfile for this starter only |
+
+The exact Python interpreter is defined by [`.python-version`](.python-version); runtime and test package pins are in [requirements-money-graph.txt](requirements-money-graph.txt) and [requirements-money-graph-test.txt](requirements-money-graph-test.txt). Node uses [`.nvmrc`](.nvmrc) and [package-lock.json](package-lock.json).
+
+**Money Graph uses no application AI model, external API, database, or cloud service.** Its explanations come from computed measurements and rules. The retained starter's opt-in OpenAI Responses API helper is separate, requires a caller-supplied model, and is not connected to Money Graph. Codex assistance during development is documented in [disclosures](disclosures/README.md).
+
+## Architecture
+
+```mermaid
+flowchart LR
+    P[Three local Parquet files] --> V[pandas and PyArrow validation]
+    V --> G[NetworkX directed graph including isolates]
+    G --> F[Observed flow and neighbor features]
+    G --> C[Seeded Louvain communities]
+    C --> F
+    F --> R[Role rules and priority contributions]
+    R --> E[Three CSVs and dashboard JSON]
+    E --> M[Hashes and run manifest]
+    R --> H[Loopback HTTP server and active results]
+    H <--> D[HTML and SVG investigation dashboard]
+    D --> U[Local upload]
+    U --> V
+    E --> S[Saved analysis files]
+    S --> H
+```
+
+| Repository path | Responsibility |
+| --- | --- |
+| [`money_graph/pipeline.py`](money_graph/pipeline.py) | Input validation, graph construction, metrics, roles, communities, ranking, and exports |
+| [`money_graph/__main__.py`](money_graph/__main__.py) | CLI arguments, batch execution, and optional dashboard launch |
+| [`money_graph/server.py`](money_graph/server.py) | Loopback HTTP API, upload worker, active results, history, metadata, downloads, and bounded graph retrieval |
+| [`money_graph/static/`](money_graph/static/) | Dashboard views, SVG graph, themes, and EN/KZ/RU catalogs |
+| [`money_graph/i18n.py`](money_graph/i18n.py) | Structured messages for validation and explanations |
+| [`scripts/`](scripts/) | Pinned-environment setup, validation, and launch commands |
+| [`tests/`](tests/) | Synthetic fixtures, calculation/HTTP/setup checks, and real browser journeys |
+| [`frontend/`](frontend/) and [`backend/`](backend/) | Separate legacy Node/React connectivity starter |
+
+Financial calculations live in the Python pipeline. The browser receives exact client IDs as decimal strings to avoid JavaScript integer precision loss. Successful uploads prepare inputs and exports in their own directories, then publish a complete result snapshot and download bytes together. Storage is local files; there is no database.
 
 ## Setup
 
-Use Bash on macOS/Linux (or WSL), from the repository root. The exact Python interpreter is pinned in [`.python-version`](.python-version); application packages are pinned in [requirements-money-graph.txt](requirements-money-graph.txt). Install that interpreter first. If you use uv, `uv python install "$(cat .python-version)"` installs it. An existing matching Python on PATH also works; uv is optional.
+Run commands from the repository root using Bash on macOS/Linux or WSL. Install the **exact Python version in [`.python-version`](.python-version)** first. If you already use `uv`, this installs it:
+
+```bash
+uv python install "$(cat .python-version)"
+```
+
+`uv` is optional; an installed matching interpreter on PATH also works. Then create/check the isolated environment and start the upload interface:
 
 ```bash
 ./scripts/setup.sh
 ./scripts/money-graph.sh --serve --upload-only
 ```
 
-Open **http://127.0.0.1:8765**, then upload the three authorized Parquet files. Setup creates the project-local `.venv`, installs exact package versions, and checks dependency consistency. No activation, Node build, `.env`, API key or database is needed. Installation needs internet (or cached packages); analysis stays local. Ctrl+C stops the server.
+Open [http://127.0.0.1:8765](http://127.0.0.1:8765). Choose the three input files and click **Analyze files**. Stop the server with Ctrl+C. No environment activation, Node build, `.env`, API key, or database is needed. Installation needs internet or cached packages; analysis runs locally.
 
-Setup reuses an existing compatible `.venv`; it never deletes or replaces an incompatible environment. Both setup and launch reject the wrong Python version, external/shared virtual environments and system packages. Launch also checks every runtime package pin before importing the app and ignores ambient Python import paths. To repair missing/drifted packages, rerun setup. For a wrong interpreter or incomplete environment, move the old `.venv` aside first. Use `MONEY_GRAPH_PYTHON=/absolute/path/to/python ./scripts/setup.sh` to select an installed interpreter explicitly when creating the environment.
+**For reviewers:** run the commands in your own terminal and keep it open throughout the demonstration. Wait for `Dashboard: http://127.0.0.1:8765` before opening the page; that line is printed only after the server binds successfully. The running command normally does not return to the shell prompt. Closing the terminal or stopping its process makes the local URL unavailable. Opening a browser tab alone does not start the application, and a preview started by a development tool may end with that tool's session.
 
-| Purpose | Command |
-| --- | --- |
-| Money Graph setup | `./scripts/setup.sh` |
-| Dashboard, upload files in browser | `./scripts/money-graph.sh --serve --upload-only` |
-| Dashboard, analyze existing local inputs | `./scripts/money-graph.sh --serve` |
-| Export results without serving | `./scripts/money-graph.sh` |
-| Older Node starter only | `npm run dev`, `npm start`, `scripts/start.sh`, `scripts/start-docker.sh` |
+If the browser reports **connection refused**, check the launch terminal first. If the command has exited, read its error and rerun the launch command after addressing it. For missing dependencies, rerun `./scripts/setup.sh`; for missing input files, prepare the input directory documented below or pass `--data /path/to/parquet`. If the port is occupied, choose `./scripts/money-graph.sh --serve --port 8766` and open the printed URL. Refresh the browser after the server is ready. In a second terminal, `curl --fail http://127.0.0.1:8765/api/overview` checks whether the server responds with the loaded dataset. A machine restart requires launching the server again.
 
-For startup from existing files, prepare the input directory below.
+Setup reuses a compatible project-local `.venv` and installs exact package pins. Setup and launch reject the wrong interpreter, external/shared environments, and system packages; launch also checks runtime dependency pins and ignores ambient Python import paths. Rerun setup for missing/drifted packages. For an incompatible or incomplete `.venv`, move it aside before rerunning setup; the script does not replace it automatically. To select an installed interpreter when creating the environment:
 
-Obtain the authorized [organizer dataset archive](https://drive.google.com/file/d/1yHdWaSb6gwPAUrqco-KrwR2U_YhzFQFT/view?usp=sharing). Extract **only** its `data/nodes.parquet`, `data/edges.parquet` and `data/transactions.parquet` into:
+```bash
+MONEY_GRAPH_PYTHON=/absolute/path/to/python ./scripts/setup.sh
+```
+
+### Analyze existing files in one command
+
+With the environment ready, a single command recalculates the supplied reference dataset, writes all results, and opens the local server:
+
+```bash
+./scripts/money-graph.sh --data docs/my-docs/data --serve
+```
+
+Use those files only within the organizer-authorized hackathon scope; see [Data and integrations](#data-and-integrations). Alternatively, obtain the authorized organizer archive and place its three Parquet files in the default input directory:
 
 ```text
 data/private/money-graph/input/
@@ -36,60 +119,134 @@ data/private/money-graph/input/
   transactions.parquet
 ```
 
-For this working copy the inputs have already been retrieved and verified. Working inputs, downloaded archives and generated results use ignored `data/private/`. **The repository also contains tracked reference copies of the three Parquet files in `docs/my-docs/data/`**, identical to the verified inputs; ignoring `data/private/` does not exclude those copies or remove their Git history. They remain unchanged by setup. The existing Docker allowlist excludes both locations. Reviewers still need organizer authorization to use the dataset; repository access does not imply permission to redistribute it. [Data contract and hashes](docs/hackathon/data-profile.md) identify the verified files. There is no implicit demo-data fallback.
-
-## One-command reproduction and dashboard
+Then run:
 
 ```bash
 ./scripts/money-graph.sh --serve
 ```
 
-This validates raw Parquet, recomputes every result, writes the exports and serves **http://127.0.0.1:8765**. Ctrl+C stops the server. No Node build or network access is required. To produce outputs and exit, omit `--serve`:
+| Purpose | Command |
+| --- | --- |
+| Start with uploads and saved history, no selected analysis | `./scripts/money-graph.sh --serve --upload-only` |
+| Generate exports from the default input directory and exit | `./scripts/money-graph.sh` |
+| Use custom input/output directories and port | `./scripts/money-graph.sh --data /path/to/parquet --out /path/to/results --serve --port 8766` |
+
+The module entry point is also available as `.venv/bin/python -m money_graph`. Inputs are never modified. Invalid input exits nonzero before replacing existing exports; retained exports therefore belong to the previous successful run, identified by its manifest. Avoid concurrent writers to the same output directory. Opening `money_graph/static/index.html` directly displays a launch guide; analysis requires the local server.
+
+## Reproducible judge walkthrough
+
+This five-minute scenario uses the existing **synthetic test fixture**, so no organizer dataset access or credentials are needed. It is a functional demonstration, not evidence of AML accuracy.
+
+### 1. Generate sample input and launch
+
+After setup, stop any server already using port 8765, then run:
 
 ```bash
-./scripts/money-graph.sh
-# Explicit locations or an alternative local port:
-./scripts/money-graph.sh --data /path/to/parquet --out data/private/money-graph/output --serve --port 8766
+.venv/bin/python - <<'PYTHON'
+from pathlib import Path
+import runpy
+
+fixture = runpy.run_path("tests/test_money_graph.py")
+fixture["write_fixture"](Path("data/private/money-graph/judge-demo/input"))
+PYTHON
+
+./scripts/money-graph.sh \
+  --data data/private/money-graph/judge-demo/input \
+  --out data/private/money-graph/judge-demo/output \
+  --serve
 ```
 
-The same command is available as `.venv/bin/python -m money_graph`. Inputs are never modified. Validation failures exit nonzero before replacing existing results. A failed run leaves the **previous** exports intact; use the successful run manifest to identify their inputs. Avoid concurrent writers to the same output directory.
+Open [the local dashboard](http://127.0.0.1:8765). Results should contain **30 accounts, 6 directed connections, 7 transfers, 23 isolates, 25 communities, and 30 ranked accounts**. The output directory contains all three CSVs, `dashboard.json`, and `run_manifest.json`.
 
-The dashboard opens the highest-priority account. Search any exact decimal client ID, including isolates. Inspect measured flows, role confidence, the matched rule, priority contributions, community description and neighboring accounts. Switch coloring between role and community. Arrows point **payer → recipient**. Click a node or ID to inspect another account. Dashed nodes mark depth four. Community colors repeat; explicit community IDs distinguish them.
+### 2. Inspect three accounts
 
-### Languages and localization
+Select English and search these exact synthetic IDs using **Find a client ID**:
 
-Use the **Language** selector for **EN · English**, **KZ · Қазақша**, or **RU · Русский**. Kazakh uses the standard language code `kk` (`kk-KZ` for formatting); `kz` is accepted as a saved preference alias. The saved browser preference takes precedence over supported browser languages, with English as the fallback. Switching languages preserves the current account, graph expansion/zoom, search text and selected upload files. Dates and numbers follow the selected locale; client IDs remain exact decimal strings. Browsers without Kazakh locale data use catalog month names and matching comma-decimal/space-group number formatting.
+| Client ID | Expected result and point to explain |
+| --- | --- |
+| `9007199254740995` | `transit`, role score `0.80`; 3 incoming peers, 1 outgoing peer, and 30,000 KZT in each direction. Transit and consolidator rules both qualify; transit wins and the ambiguity deduction lowers confidence. |
+| `9007199254740999` | Isolated `peripheral` account; no connections, role score `0.10`, priority `0`. The account is retained and searchable. |
+| `9007199254741022` | Depth-four `peripheral` account with 30,000 KZT incoming and no observed outgoing transfer; role score `0.12`. The boundary warning explains why missing onward links cannot establish terminal status. |
 
-Translations are plain-text, UTF-8 JSON files in [`money_graph/static/locales/`](money_graph/static/locales/). Edit the same message key in `en.json`, `kk.json` and `ru.json`, preserving named placeholders such as `{gid}` and `{count}`. Use `t(key, params)` for dynamic text and `data-i18n="key"` (or `data-i18n-aria-label`, `data-i18n-placeholder`) on text-only HTML elements. Never interpolate translations as HTML. For new languages, add the catalog and register its locale/format in `static/i18n.js`, the selector in `index.html` and the server's catalog allowlist. The small direct-file launch guide in `static/file-preview.js` keeps its own strings because `file:` cannot fetch JSON catalogs.
+For the first account, follow payer → recipient arrows, switch **Color by** between Role and Cluster, expand to two hops, zoom/pan, and reset the graph. Inspect its rule, priority contributions, and community description. Switch language or theme and confirm the account and graph state remain available.
 
-The Python validator supplies stable message keys with named parameters; the browser translates them locally. Community descriptions expose message parts and measured values. English API text, canonical role keys, CLI diagnostics and reproducible CSV/JSON exports remain unchanged by the language selection. No translation API, external assets, additional packages or build step are used. Catalog tests verify matching keys/placeholders; browser tests cover switching, persistence, fallback, blocked storage, localized errors/uploads and mobile layout. Translations are AI-assisted and have not received independent native-speaker review.
+### 3. Upload, save, and download
 
-Open the application at **http://127.0.0.1:8765** after launching the server. Opening `money_graph/static/index.html` directly shows a localized launch guide; analysis requires the local server.
+Return to **Analyses**, select the three files from `data/private/money-graph/judge-demo/input/`, and click **Analyze files**. After success, open Analyses again: the saved run appears in **Previous analyses**, with a separate ID and a matching-files label because the startup analysis used the same bytes. Use **Edit details** to set a title and optional description, then reopen the run. Download the CSVs and manifest from Results; the node and ranking CSVs each contain 30 data rows.
 
-### Upload and analysis status
-
-Choose `nodes.parquet`, `edges.parquet` and `transactions.parquet` in the dashboard, then **Analyze files**. All three must come from the same dataset and retain their exact filenames. The limit is **64 MiB total**, including multipart framing; one analysis runs at a time. The dashboard shows receiving, validating, analyzing, exporting, success or failure. Files are sent only to the loopback Python server on this computer.
-
-Inputs, calculations, exports and manifest are prepared in a separate run. The active dashboard and all download links switch together only after success. Schema, reconciliation, corrupt-Parquet and processing failures preserve the previous active data and export bytes; errors appear beside the upload form. Other tabs using a stale revision receive an explicit reload message when inspecting or expanding.
-
-To start with no active dataset:
+To check persistence, stop the server and restart with the same output directory:
 
 ```bash
-./scripts/money-graph.sh --serve --upload-only
+./scripts/money-graph.sh --serve --upload-only \
+  --out data/private/money-graph/judge-demo/output
 ```
 
-Each successful upload is retained under `<out>/uploads/<run-id>/input/` and `output/`; its location and processing time appear in the status. Download `run_manifest.json` to verify input/output hashes. Failed uploads are removed. The original CLI output files remain the startup run; dashboard downloads always serve the active run. Restarting normally recomputes `--data`, rather than automatically restoring the latest upload. To reproduce or reopen a saved upload:
+Saved analyses remain listed; opening one restores its original results and exports without recalculation.
+
+### 4. Reproduce the organizer dataset, when authorized
 
 ```bash
-# Replace RUN_ID with the successful run ID shown in the dashboard.
-./scripts/money-graph.sh --data "data/private/money-graph/output/uploads/RUN_ID/input" --out data/private/money-graph/replayed --serve
+./scripts/money-graph.sh --data docs/my-docs/data \
+  --out data/private/money-graph/judge-official
 ```
 
-### Bounded graph exploration
+For the inspected reference files, the repository records **2,248 accounts, 3,119 connections, 4,840 transactions, 19 isolates, 88 communities, and 50 ranked accounts**. Check the fresh `run_manifest.json` for input hashes, parameters, versions, and elapsed processing time. The organizer's target is a complete raw-input-to-export run in under five minutes; installation and server uptime are separate. Historical local verification is recorded in [requirements](docs/hackathon/requirements.md) and [disclosures](disclosures/verification-limits-16-08.md); it is not a cross-machine performance guarantee.
 
-Start at one hop and choose **Expand to two hops**. Distance follows incoming or outgoing connections; displayed transfer arrows retain their original direction. The **50-account limit includes the selected account**. Selection is deterministic: shortest hop first, then exact numeric gid. The caption reports visible, eligible and omitted accounts. Every directed edge between visible accounts is included, including reciprocal links and self-transfers. Expansion does not change roles, communities, scores or the all-node exports. Omitted accounts remain searchable; “All observed directed connections” still lists every incident edge of the selected account.
+## Using the dashboard
 
-Drag the graph background to pan; use +/− or the mouse wheel to zoom. With the graph focused, arrow keys pan and +/− zoom. **Reset graph** returns to the original one-hop view and fits it to the canvas. Clicking an account starts a new one-hop inspection. Display distance is separate from the dataset’s original collection depth.
+**Navigation and graph.** Analyses places the upload form above saved history. Startup with an active dataset, a successful upload, or reopening a saved run displays Results, initially inspecting the highest-priority account. Use **Analyses** or **All analyses** to return; **Results** or **View results** returns to the loaded analysis. Exact-ID search includes accounts omitted from the graph view and isolates. Click a node or ID to inspect another account. Dashed nodes mark depth four. Community colors repeat; explicit community IDs distinguish them.
+
+The graph starts at one hop and expands to two. Distance follows connections in either direction while arrows preserve transfer direction. The **50-account cap includes the selected account**; selection is shortest hop first, then exact numeric ID. The caption reports visible, eligible, and omitted accounts, and all directed edges between visible accounts are shown, including self/reciprocal links. The full incident-connection table remains available. This display cap does not remove accounts from calculations, search, or exports. Drag to pan, use +/− or the mouse wheel to zoom; keyboard arrows pan a focused graph. **Reset graph** restores the one-hop view. Display distance is separate from original collection depth.
+
+**Uploads and history.** Upload all three files from the same dataset with their exact filenames. The limit is **64 MiB total, including multipart framing**, with one analysis at a time. Status shows receiving, validating, analyzing, exporting, success, or failure. Failed uploads are removed, their errors appear beside the form, and active results stay available. Files go only to the loopback server on this computer.
+
+Successful uploads remain under `<out>/uploads/<run-id>/input/` and `output/`. History is newest first and survives restarts using the same output directory. Every upload receives a unique analysis ID, even if the input files match. A SHA-256 fingerprint over the three named input-file hashes labels byte-identical datasets; it does not merge runs or establish algorithm-version equivalence. Reopening verifies saved artifact hashes; damaged/missing artifacts produce an error without replacing current results. Unreadable history metadata is reported. Selection is shared across tabs connected to the server; refresh another tab after switching analyses. Stale inspection/expansion requests receive a reload message.
+
+**Editable details.** Titles are required (1–120 characters); optional descriptions allow multiple lines (up to 2,000 characters) and can be cleared. Save persists changes; Cancel discards drafts. Metadata lives in `analysis_details.json`, separate from calculation artifacts, and user-written text is unchanged by language selection. A new CLI startup run receives default details rather than inheriting the prior startup title.
+
+A normal restart recalculates `--data`. An upload-only restart starts with no selected analysis and lets you open saved history. To independently recalculate a saved upload using the default output layout:
+
+```bash
+# Replace RUN_ID with the ID shown in the saved analysis.
+./scripts/money-graph.sh \
+  --data "data/private/money-graph/output/uploads/RUN_ID/input" \
+  --out data/private/money-graph/replayed --serve
+```
+
+**Language and appearance.** Select EN · English, KZ · Қазақша, or RU · Русский. Kazakh uses the `kk` locale; a saved `kz` preference is accepted as an alias. Saved language preference takes precedence over supported browser languages, with English fallback. Dates/numbers are localized; exact IDs, canonical role keys, CLI diagnostics, and exports are preserved. Browsers without Kazakh locale data use a local formatting fallback. Translations are AI-assisted and have not received independent native-speaker review.
+
+Light/Dark/System theme selection defaults to System, follows operating-system changes in that mode, and persists when browser storage is available. Theme and language switching preserve investigation state. Themes, fonts, scripts, and translations require no external asset service.
+
+<details>
+<summary>Maintaining translations</summary>
+
+Edit matching keys in [`money_graph/static/locales/`](money_graph/static/locales/), preserving named placeholders such as `{gid}` and `{count}`. Use `t(key, params)` for dynamic text and `data-i18n`/`data-i18n-aria-label`/`data-i18n-placeholder` attributes for text-only HTML; never interpolate translations as HTML. New languages also need registration in `static/i18n.js`, the HTML selector, and the server catalog allowlist. The direct-file guide in `static/file-preview.js` keeps its own strings because `file:` cannot fetch catalogs. Python validation and community descriptions supply structured message keys and measured values. Tests check matching catalog keys/placeholders and browser behavior.
+
+</details>
+
+## Data and integrations
+
+The organizer supplies a one-off batch export of **July 1–31, 2026 intra-bank transfers**, collected by following outgoing transfers from **81 seed clients through four hops**, with a **5,000 KZT minimum individual transfer**. The repository contains the [source dataset README](docs/my-docs/README.md), [task specification](docs/my-docs/task.md), and an [inspected data profile with SHA-256 provenance](docs/hackathon/data-profile.md).
+
+| Input file | Required columns | Interpretation |
+| --- | --- | --- |
+| `nodes.parquet` | `gid, depth, is_seed` | One anonymized client per row; exact int64 ID, minimum discovery hop 0–4, and seed flag |
+| `edges.parquet` | `src, dst, sum_kzt, n_tx, depth` | One ordered payer → recipient pair; aggregate KZT and transfer count; discovery hop 1–4 |
+| `transactions.parquet` | `src, dst, date, sum_kzt` | Individual transfers, with float64 KZT amounts and day-level dates, without time or timezone |
+
+Working inputs/results use ignored `data/private/`. **Reference copies of all three Parquet files are tracked under [`docs/my-docs/data/`](docs/my-docs/data/)**; ignoring the working directory does not remove those copies or their history. Dataset use is authorized for the hackathon, not implicitly for redistribution. Setup preserves the reference files. There is no automatic demo fallback: the synthetic walkthrough creates its inputs explicitly.
+
+No bank API, live transaction stream, customer enrichment, external translation service, or application LLM participates in Money Graph. Its HTTP endpoints are local interfaces implemented in `server.py`:
+
+| Local interface | Purpose |
+| --- | --- |
+| `POST /api/analysis`, `GET /api/status` | Upload the three files and inspect processing status |
+| `GET /api/analyses` | List saved analyses |
+| `POST /api/analyses/<id>/open` and `/details` | Reopen an analysis or update its title/description |
+| `GET /api/overview`, `/api/account?gid=...`, `/api/graph?gid=...&hops=1` | Retrieve results and account neighborhoods (one or two hops) |
+| `GET /exports/<filename>` | Download the selected analysis's three CSVs or run manifest |
+
+Mutation routes enforce local same-origin requests. The server binds to `127.0.0.1`; these interfaces are not a hosted public API.
 
 ## Outputs
 
@@ -152,71 +309,72 @@ Cluster summaries retain size, seeds, role composition, internal directed links 
 
 Descriptions report candidate counts and a supporting account with peer counts and observed KZT for fan patterns, or neighbor-community and cross-community-peer counts for bridging. Example selection uses the largest relevant count, then exact numeric gid. Communities with no qualifying pattern say so. Each description includes depth-four boundary counts, seeds and missing incoming flows, the outgoing-only four-hop collection, July/intra-bank scope, the 5,000 KZT threshold and the distinction between observed flows and balances. These additions change descriptions only; the role and priority rules above are unchanged. Internal KZT counts each directed transfer once when both endpoints share the cluster. Algorithmic communities are not verified organizations. More details: [methodology](docs/money-graph/methodology.md).
 
-## Verification
+## Automated checks
 
-The supplied data produced **2,248 accounts, 3,119 edges, 4,840 transactions, 19 isolates, 88 communities and 50 ranked accounts**. Two local v2 runs took **0.232 and 0.198 seconds** for input hashing, parsing, validation, analysis and export on macOS arm64 / Python 3.14.6. Dependency installation and serving are excluded. This is well below five minutes on this machine, not a cross-machine performance guarantee.
-
-Verified: exact official schemas and gid coverage; scores and evidence constraints; cluster member/seed counts and internal amounts; ranking order; all 444 boundary nodes excluded from terminal; byte-identical CSV and dashboard JSON across repeated runs; shuffled-input invariance on fixtures. V2 acceptance also compared against the baseline implementation: per-account features, roles, scores, evidence, priorities and ranking are unchanged, as are cluster membership, seed/member counts, internal amounts and leading IDs. Detailed local evidence is in ignored `data/private/money-graph/v2-verification/verification.json` and each run manifest.
+Run the existing calculation, validation, export, localization, setup, and real HTTP tests after setup:
 
 ```bash
-# Synthetic calculation, validation, export/reproducibility and real HTTP tests:
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
+```
 
-# One-time browser-test setup:
+Install the test-only dependencies and Chromium, then run the real dashboard/backend browser journeys:
+
+```bash
 ./scripts/setup.sh --test
 .venv/bin/python -m playwright install chromium
-
-# Real dashboard + backend on synthetic data (no mocks):
 .venv/bin/python -m unittest discover -s tests -p 'browser_*.py' -v
+```
 
-# Also run that journey on the private official data:
-MONEY_GRAPH_TEST_DATA=data/private/money-graph/input \
+These checks use synthetic fixtures by default and need permission to open loopback sockets and launch Chromium. On Linux, Chromium may also need system libraries; the CI command uses `python -m playwright install --with-deps chromium` through `.venv/bin/python`. To additionally exercise the main journey on authorized reference data:
+
+```bash
+MONEY_GRAPH_TEST_DATA=docs/my-docs/data \
   .venv/bin/python -m unittest discover -s tests -p 'browser_*.py' -v
 ```
 
-Browser checks cover first upload without startup data, successful and repeated uploads, validation/corrupt-file failures preserving active results and exports, exact-ID search, edge directions, role/cluster coloring, two-hop expansion, visible peer-to-peer links, the 50-account cap, zoom/pan/reset, explanations, isolates, depth-four warnings, missing/invalid IDs, exports and mobile overflow. No app requests leave loopback. Tests require loopback sockets; sandboxed environments must permit them.
+Coverage includes deterministic outputs, all-node preservation, role/priority formulas, collection-boundary handling, upload failures preserving active results, saved-analysis reopening/editing, precise-ID search, bounded graph exploration, exports, localization, themes, and narrow layouts. No paid or live AI request is part of these checks.
 
-The retained Node starter is checked separately, with the version pinned in `.nvmrc`:
-
-```bash
-source "$HOME/.nvm/nvm.sh"  # if nvm is not already loaded
-nvm use
-npm ci                    # only when dependencies are not installed
-npm run typecheck
-npm test
-npm run build
-```
-
-Its `npm run dev`, `npm start` and `scripts/start.sh` still launch the earlier connectivity app, not this Python dashboard. Existing optional AI code is not invoked by Money Graph. No changes were made to its API, dependencies or configuration. Remote CI for the final changes and Docker execution remain unverified; no push was made. The CI workflow defines separate jobs for Money Graph and the Node starter. Money Graph reads `.python-version`, runs `scripts/setup.sh --test`, installs Chromium and runs the Python/setup/HTTP and browser suites on synthetic inputs. Remote Actions execution remains pending until an authorized push.
-
-## Architecture
-
-```mermaid
-flowchart LR
-    P[Three local Parquet files] --> V[pandas + PyArrow validation]
-    V --> G[NetworkX directed graph: every node]
-    G --> F[Observed flow and neighbor features]
-    G --> C[Seeded Louvain communities]
-    C --> F
-    F --> R[Role rules and priority contributions]
-    R --> E[Three official CSVs + dashboard JSON]
-    E --> M[Hashes and run manifest]
-    R --> H[Loopback Python server: active result snapshot]
-    H --> D[Local HTML / SVG dashboard]
-    D --> U[Three-file local upload]
-    U --> V
-```
-
-`money_graph/pipeline.py` owns calculations; `server.py` owns local upload/status routes, result publication and bounded graph retrieval; `static/` displays results and navigation. No financial calculations are hidden in UI code. [Requirements](docs/hackathon/requirements.md) map the implementation to acceptance checks.
+[GitHub Actions](.github/workflows/jiggles-ci.yml) defines separate Python/browser and legacy Node jobs. A workflow file does not establish a successful remote run. See [verification limits](disclosures/verification-limits-16-08.md) for the recorded local checks and remaining gaps; remote CI for the current uncommitted changes, independent second-machine setup, Docker execution, and the live organizer presentation remain unverified.
 
 ## Limitations and next scale
 
-The collection follows outgoing transfers from 81 seeds for four hops. Missing onward edges at depth four, missing external incoming flows, other banks and amounts below 5,000 KZT prevent complete flow/balance conclusions. No customer attributes are invented or externally enriched. No role ground truth exists; passing tests establishes implementation behavior, not AML accuracy. Transit ratios do not prove the same money moved onward. Terminal, coordinator and community labels require independent investigation. The dedicated cluster browser, advanced filters and transaction viewer are deferred. This small version does not perform temporal matching, sensitivity analysis or full-network force-layout visualization.
+- **Partial observation:** outgoing-only collection, the four-hop boundary, missing outside incoming funds, other-bank transfers, and amounts below 5,000 KZT prevent complete balance or fund-lineage conclusions. All 444 depth-four accounts in the reference data are excluded from the terminal rule.
+- **Heuristic inference:** there are no labeled correct roles. Confidence is not a calibrated probability, communities are not verified organizations, and tests do not establish AML detection accuracy. Threshold sensitivity and partition robustness have not been measured.
+- **Fixed data contract:** validation currently enforces July 2026 dates, the 5,000 KZT threshold, and the documented depth/schema rules. This is not a general-purpose import format or live banking integration.
+- **Local operation:** one analysis runs at a time, uploads are capped at 64 MiB, and graph views show at most 50 accounts. There is no authentication, multi-user access control, database, production hosting, or verified Money Graph container. Saved selection is shared across browser tabs.
+- **Deferred capabilities:** dedicated cluster browsing, advanced filters, transaction viewing, temporal matching, cycle analysis, node-removal simulation, AI chat, and full-network force-layout visualization are not implemented. Active days and dates are descriptive only.
+- **Translation review:** EN/KZ/RU catalogs are present; independent native-speaker review is still needed.
 
-For roughly one million nodes, replace in-memory pandas/NetworkX with columnar scans, compact graph storage and partitioned/approximate algorithms. Index account neighborhoods on disk and serve bounded results; avoid loading all results into RAM or a browser. Reassess community stability, thresholds, runtime and memory on representative data. The current benchmark does not establish performance at that scale.
+At approximately **one million nodes**, the current in-memory pandas/NetworkX approach would need redesign: columnar scans, compact on-disk graph storage, indexed neighborhoods, and partitioned or approximate algorithms. Results should be served in bounded pages without loading the whole graph into browser memory. Community stability, scoring thresholds, runtime, and memory would need measurement on representative large data. These are proposed changes, not implemented scale claims.
 
-A five-minute walkthrough: reproduce, show the three exports, inspect a high-priority node, then a depth-four account and an isolate. Explain one role rule and its priority contributions. A live presentation to organizers remains to be performed.
+## Deployment
+
+**No deployed Money Graph URL is documented in this repository.** The supported version runs locally at [http://127.0.0.1:8765](http://127.0.0.1:8765) after launch. The existing Dockerfile and Docker launcher package the legacy Node starter. Money Graph has no verified public hosting or container configuration; see [deployment readiness](docs/hackathon/deployment-readiness.md).
+
+## Legacy Node starter
+
+The separate `frontend/` and `backend/` workspaces provide a health/echo connectivity app. They are retained in the repository and are not required for the Money Graph dashboard. To run them, activate the Node version from `.nvmrc` and its bundled npm:
+
+```bash
+source "$HOME/.nvm/nvm.sh"  # If nvm is not already loaded.
+nvm use
+npm ci
+npm run dev
+```
+
+Vite listens on `127.0.0.1:5173`; Express uses port 3000 by default, with `/api` proxied from Vite. `.env.example` documents optional server configuration. Check and build this starter separately:
+
+```bash
+npm run typecheck
+npm test
+npm run build
+npm start
+```
+
+`npm start` serves the existing production build through Express. The optional server-only OpenAI helper in `backend/src/openai.ts` uses the Responses API with `OPENAI_API_KEY` and `OPENAI_MODEL`; no model is selected in the repository defaults. It is not wired into the health/echo routes or Money Graph. Its tests mock transport, so they do not demonstrate live-model readiness. There is no configured Node lint or Node browser-test command.
 
 ## Sources and attribution
 
-The [official specification](https://docs.google.com/document/d/1JPLU-G6R25Ge2hVaY2J9cqvrx7FGExj87XKwJPaMz3o/edit?usp=sharing), [dataset README](https://drive.google.com/file/d/1ro-SiY042jv7De0h7tXBDyY8ZKdHz_US/view?usp=sharing) and [organizer Python starter](https://drive.google.com/file/d/1EnMGG22jSH7Mvgt396kKRi3bjAobsomN/view?usp=sharing) were inspected September 23, 2026. This implementation extends the starter's load/DiGraph/flow-feature/export structure, fixing isolate omission and adding validation, rules, clustering, ranking and viewing. See [DISCLOSURES.md](DISCLOSURES.md) for dependency licenses and AI/tool assistance.
+The repository includes the organizer's [task specification](docs/my-docs/task.md), [dataset documentation](docs/my-docs/README.md), and [Python starter](docs/my-docs/starter/README.md). The recorded original sources are the [official specification](https://docs.google.com/document/d/1JPLU-G6R25Ge2hVaY2J9cqvrx7FGExj87XKwJPaMz3o/edit?usp=sharing), [dataset README](https://drive.google.com/file/d/1ro-SiY042jv7De0h7tXBDyY8ZKdHz_US/view?usp=sharing), [dataset archive](https://drive.google.com/file/d/1yHdWaSb6gwPAUrqco-KrwR2U_YhzFQFT/view?usp=sharing), and [starter archive](https://drive.google.com/file/d/1EnMGG22jSH7Mvgt396kKRi3bjAobsomN/view?usp=sharing). Retrieval dates and hashes are recorded in the [data profile](docs/hackathon/data-profile.md).
+
+Money Graph extends the organizer starter's Parquet loading, directed-graph metrics, and CSV contracts with all-node preservation, validation, rules, communities, ranking, and a local dashboard. [Requirements](docs/hackathon/requirements.md) map implementation to acceptance criteria; [methodology](docs/money-graph/methodology.md) explains the analysis. [Disclosures](disclosures/README.md) describe AI/tool assistance, data handling, dependencies, licenses, and verification limits.

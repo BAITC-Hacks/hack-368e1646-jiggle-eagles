@@ -5,7 +5,7 @@
     if (location.protocol !== 'file:') {
       const application = document.createElement('script');
       application.type = 'module';
-      application.src = './app.js';
+      application.src = '/app.js';
       // A server started before these files were saved still serves index.html but 404s on newer
       // modules. Without this the page looks normal yet has no listeners at all, and the only clue
       // is in the browser console. Say it on the page instead.
@@ -88,7 +88,7 @@
     command.style.whiteSpace = 'pre-wrap';
     command.style.overflowWrap = 'anywhere';
     command.style.padding = '16px';
-    command.style.background = '#eef5f2';
+    command.style.background = 'var(--surface-subtle)';
     command.style.borderRadius = '6px';
     command.append(node('code', './scripts/money-graph.sh --serve --upload-only'));
     panel.append(command, node('p', copy.port, 'muted'));

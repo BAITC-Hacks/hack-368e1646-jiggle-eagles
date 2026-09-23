@@ -1,15 +1,21 @@
 """Loopback dashboard with isolated upload runs and atomic in-memory publication."""
 from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime
 from email import policy
 from email.parser import BytesParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+import hashlib
+import json
+import math
 import re
 import tempfile
 import threading
 from urllib.parse import parse_qs, urlsplit
 import uuid
+
+import networkx as nx
 
 from .pipeline import Analysis, SCHEMAS, ValidationError, cluster_description_parts, dashboard_data, json_bytes, run
 from .i18n import message, render
@@ -21,6 +27,7 @@ MAP_FIELDS = ('gid', 'role', 'cluster_id', 'depth', 'is_seed', 'boundary', 'in_d
 # Grouped flow schematic: how the network works, before any single account is opened.
 CLUSTER_GROUPS = 12
 MAX_UPLOAD_BYTES = 64 * 1024 * 1024
+MAX_DETAILS_BYTES = 16 * 1024
 INPUT_NAMES = ('nodes', 'edges', 'transactions')
 BUSY = {'receiving', 'validating', 'analyzing', 'exporting'}
 
@@ -38,7 +45,31 @@ class Snapshot:
 
     @classmethod
     def create(cls, result: Analysis, out_dir: Path, revision: str) -> 'Snapshot':
-        data = dashboard_data(result)
+        exports = {name: (out_dir / name).read_bytes() for name in [*SCHEMAS, 'run_manifest.json']}
+        return cls.from_result(result, exports, revision)
+
+    @classmethod
+    def load(cls, out_dir: Path, revision: str) -> 'Snapshot':
+        """Restore the saved calculation, verifying bytes before publishing anything."""
+        manifest_bytes = (out_dir / 'run_manifest.json').read_bytes()
+        manifest = json.loads(manifest_bytes)
+        payloads = {name: (out_dir / name).read_bytes() for name in [*SCHEMAS, 'dashboard.json']}
+        if any(hashlib.sha256(body).hexdigest() != manifest['outputs'][name]
+               for name, body in payloads.items()):
+            raise ValueError('Saved artifact checksum mismatch')
+        data = json.loads(payloads.pop('dashboard.json'))
+        nodes = [dict(node, gid=int(node['gid'])) for node in data['nodes']]
+        graph = nx.DiGraph()
+        graph.add_nodes_from(node['gid'] for node in nodes)
+        for edge in data['edges']:
+            graph.add_edge(int(edge['src']), int(edge['dst']), n_tx=edge['n_tx'], sum_kzt=edge['sum_kzt'])
+        result = Analysis(graph, nodes, data['clusters'], data['top'], data['profile'])
+        return cls.from_result(result, {**payloads, 'run_manifest.json': manifest_bytes}, revision, data)
+
+    @classmethod
+    def from_result(cls, result: Analysis, exports: dict[str, bytes], revision: str,
+                    data: dict | None = None) -> 'Snapshot':
+        data = dashboard_data(result) if data is None else data
         membership = {n['gid']: n['cluster_id'] for n in result.nodes}
         data['clusters'] = [dict(cluster) for cluster in data['clusters']]
         for cluster in data['clusters']:
@@ -59,7 +90,6 @@ class Snapshot:
                 incident[b].append(edge)
                 peers[a].add(b)
                 peers[b].add(a)
-        exports = {name: (out_dir / name).read_bytes() for name in [*SCHEMAS, 'run_manifest.json']}
         map_payload = json_bytes(dict(revision=revision, profile=data['profile'],
                                       nodes=[{field: node[field] for field in MAP_FIELDS} for node in data['nodes']]))
         flow_payload = json_bytes(dict(revision=revision, modes=flow_modes(data['nodes'], data['edges'])))
@@ -143,6 +173,48 @@ def flow_modes(nodes: list[dict], edges: list[dict]) -> dict:
             total_kzt=round(sum(links.values()) + sum(internal.values()), 2))
     return modes
 
+def saved_analysis(out_dir: Path, revision: str) -> dict:
+    manifest = json.loads((out_dir / 'run_manifest.json').read_bytes())
+    started = manifest['started_utc']
+    if not isinstance(started, str) or datetime.fromisoformat(started).utcoffset() is None:
+        raise ValueError('Missing timestamp timezone')
+    hashes = {f'{name}.parquet': manifest['inputs'][f'{name}.parquet'] for name in INPUT_NAMES}
+    if any(not isinstance(value, str) or not re.fullmatch(r'[0-9a-f]{64}', value) for value in hashes.values()):
+        raise ValueError('Invalid input hashes')
+    counts = {key: manifest['profile'][key] for key in ('nodes', 'edges', 'transactions')}
+    if any(type(value) is not int or value < 0 for value in counts.values()):
+        raise ValueError('Invalid dataset counts')
+    elapsed = manifest['elapsed_seconds']
+    if type(elapsed) not in (int, float) or not math.isfinite(elapsed) or elapsed < 0:
+        raise ValueError('Invalid duration')
+    details = dict(title=None, description='')
+    try:
+        saved = json.loads((out_dir / 'analysis_details.json').read_bytes())
+    except FileNotFoundError:
+        saved = None
+    if saved is not None and saved['started_utc'] == started:
+        details = validate_details({key: saved[key] for key in ('title', 'description')})
+    return dict(id=revision, started_utc=started, profile=counts, elapsed_seconds=elapsed,
+                dataset_fingerprint=hashlib.sha256(json_bytes(hashes)).hexdigest(), **details)
+
+
+def validate_details(value: object) -> dict[str, str]:
+    if not isinstance(value, dict) or set(value) - {'title', 'description'}:
+        raise ValidationError('error.detailsInvalid')
+    title, description = value.get('title'), value.get('description', '')
+    if not isinstance(title, str) or not isinstance(description, str):
+        raise ValidationError('error.detailsInvalid')
+    title, description = title.strip(), description.strip()
+    if not 1 <= len(title) <= 120 or any(ord(char) < 32 or char in '\x7f\u2028\u2029' for char in title):
+        raise ValidationError('error.detailsTitle')
+    if len(description) > 2000 or any(ord(char) < 32 and char not in '\n\r\t' for char in description):
+        raise ValidationError('error.detailsDescription')
+    try:
+        (title + description).encode('utf-8')
+    except UnicodeEncodeError as error:
+        raise ValidationError('error.detailsInvalid') from error
+    return dict(title=title, description=description)
+
 
 def parse_upload(content_type: str, body: bytes) -> dict[str, bytes]:
     message = BytesParser(policy=policy.default).parsebytes(
@@ -179,6 +251,62 @@ class DashboardServer(ThreadingHTTPServer):
         with self.lock:
             return dict(self.job, revision=self.active.revision if self.active else None,
                         node_limit=NODE_LIMIT, max_upload_bytes=MAX_UPLOAD_BYTES)
+
+    def history(self) -> dict:
+        entries, unavailable = [], 0
+        paths = [('startup', self.out_dir)] if (self.out_dir / 'run_manifest.json').exists() else []
+        uploads = self.out_dir / 'uploads'
+        if uploads.exists():
+            paths.extend((path.name, path / 'output') for path in uploads.iterdir()
+                         if re.fullmatch(r'[0-9a-f]{32}', path.name) and path.is_dir() and not path.is_symlink())
+        for revision, path in paths:
+            try:
+                entries.append(saved_analysis(path, revision))
+            except (OSError, ValueError, KeyError, TypeError):
+                unavailable += 1
+        entries.sort(key=lambda entry: (datetime.fromisoformat(entry['started_utc']), entry['id']))
+        seen = {}
+        with self.lock:
+            active = self.active.revision if self.active else None
+        for entry in entries:
+            fingerprint = entry['dataset_fingerprint']
+            entry['duplicate_of'] = seen.get(fingerprint)
+            seen.setdefault(fingerprint, entry['id'])
+            entry['active'] = entry['id'] == active
+        return dict(analyses=list(reversed(entries)), unavailable_count=unavailable)
+
+    def open_analysis(self, revision: str) -> None:
+        with self.lock:
+            if self.job['state'] in BUSY:
+                raise ValidationError('error.busy')
+            path = self.out_dir if revision == 'startup' else self.out_dir / 'uploads' / revision / 'output'
+            if not path.is_dir() or path.parent.is_symlink() or not (path / 'run_manifest.json').is_file():
+                raise ValidationError('error.analysisMissing')
+            try:
+                saved_analysis(path, revision)
+                snapshot = Snapshot.load(path, revision)
+            except (OSError, ValueError, KeyError, TypeError, IndexError, nx.NetworkXException) as error:
+                raise ValidationError('error.analysisSaved') from error
+            self.active = snapshot
+            self.job = dict(state='idle', message=render(message('status.idle')), run_directory=None)
+
+    def edit_analysis(self, revision: str, value: object) -> dict:
+        details = validate_details(value)
+        with self.lock:
+            path = self.out_dir if revision == 'startup' else self.out_dir / 'uploads' / revision / 'output'
+            if not path.is_dir() or path.parent.is_symlink() or not (path / 'run_manifest.json').is_file():
+                raise ValidationError('error.analysisMissing')
+            try:
+                entry = saved_analysis(path, revision)
+                payload = json_bytes(dict(details, started_utc=entry['started_utc']))
+                # Replace only editable metadata; calculations and export hashes stay intact.
+                with tempfile.TemporaryDirectory(prefix='.details-', dir=path) as temporary:
+                    staged = Path(temporary) / 'analysis_details.json'
+                    staged.write_bytes(payload)
+                    staged.replace(path / 'analysis_details.json')
+                return dict(entry, **details)
+            except (OSError, ValueError, KeyError, TypeError) as error:
+                raise ValidationError('error.detailsSave') from error
 
     def progress(self, state: str) -> None:
         with self.lock:
@@ -223,7 +351,8 @@ class DashboardServer(ThreadingHTTPServer):
 
 def make_server(result: Analysis | None, out_dir: Path, port: int = 8765) -> DashboardServer:
     static = Path(__file__).parent / 'static'
-    assets = {'/': ('index.html', 'text/html'), '/style.css': ('style.css', 'text/css'),
+    assets = {'/style.css': ('style.css', 'text/css'),
+              '/theme.js': ('theme.js', 'text/javascript'),
               '/file-preview.js': ('file-preview.js', 'text/javascript'),
               '/app.js': ('app.js', 'text/javascript'), '/i18n.js': ('i18n.js', 'text/javascript'),
               '/map.js': ('map.js', 'text/javascript'),
@@ -263,6 +392,50 @@ def make_server(result: Analysis | None, out_dir: Path, port: int = 8765) -> Das
 
         def do_POST(self) -> None:
             if not self.local_request(mutation=True):
+                return
+            editing = re.fullmatch(r'/api/analyses/(startup|[0-9a-f]{32})/details', self.path)
+            if editing:
+                self.close_connection = True
+                lengths = self.headers.get_all('Content-Length', [])
+                if self.headers.get('Transfer-Encoding') or len(lengths) != 1 or not lengths[0].isdigit():
+                    self.error(400, 'error.contentLength')
+                    return
+                if not 0 < int(lengths[0]) <= MAX_DETAILS_BYTES:
+                    self.error(413, 'error.detailsLimit')
+                    return
+                if self.headers.get_content_type() != 'application/json':
+                    self.error(415, 'error.detailsJson')
+                    return
+                try:
+                    self.connection.settimeout(30)
+                    body = self.rfile.read(int(lengths[0]))
+                    if len(body) != int(lengths[0]):
+                        raise ValueError('Incomplete request')
+                    value = json.loads(body)
+                except (ValueError, OSError):
+                    self.error(400, 'error.detailsInvalid')
+                    return
+                try:
+                    entry = self.server.edit_analysis(editing[1], value)
+                except ValidationError as error:
+                    key = error.message['key']
+                    self.error({'error.analysisMissing': 404, 'error.detailsSave': 500}.get(key, 400), key)
+                    return
+                self.send(200, json_bytes(entry), 'application/json')
+                return
+            selection = re.fullmatch(r'/api/analyses/(startup|[0-9a-f]{32})/open', self.path)
+            if selection:
+                self.close_connection = True
+                if self.headers.get('Transfer-Encoding') or self.headers.get_all('Content-Length', []) not in ([], ['0']):
+                    self.error(400, 'error.emptyBody')
+                    return
+                try:
+                    self.server.open_analysis(selection[1])
+                except ValidationError as error:
+                    key = error.message['key']
+                    self.error({'error.busy': 409, 'error.analysisMissing': 404}.get(key, 422), key)
+                    return
+                self.send(200, json_bytes(self.server.status()), 'application/json')
                 return
             if self.path != '/api/analysis':
                 self.close_connection = True
@@ -306,12 +479,25 @@ def make_server(result: Analysis | None, out_dir: Path, port: int = 8765) -> Das
             if not self.local_request():
                 return
             url = urlsplit(self.path)
+            if url.path in {'/', '/analyses'} or re.fullmatch(r'/analyses/(startup|[0-9a-f]{32})', url.path):
+                # Root asset URLs support refresh/deep links without breaking file:// previews.
+                page = (static / 'index.html').read_bytes().replace(b' src="./', b' src="/').replace(b' href="./', b' href="/')
+                self.send(200, page, 'text/html')
+                return
             if url.path in assets:
                 filename, content_type = assets[url.path]
                 self.send(200, (static / filename).read_bytes(), content_type)
                 return
             if url.path == '/api/status':
                 self.send(200, json_bytes(self.server.status()), 'application/json')
+                return
+            if url.path == '/api/analyses':
+                try:
+                    history = self.server.history()
+                except OSError:
+                    self.error(500, 'error.history')
+                    return
+                self.send(200, json_bytes(history), 'application/json')
                 return
             with self.server.lock:
                 snapshot = self.server.active
@@ -359,6 +545,11 @@ def make_server(result: Analysis | None, out_dir: Path, port: int = 8765) -> Das
                         cluster=snapshot.data['clusters'][snapshot.nodes[gid]['cluster_id']])
                 self.send(200, json_bytes(payload), 'application/json')
             else:
+                # A detail-page download must never silently use another tab's analysis.
+                query = parse_qs(url.query, keep_blank_values=True)
+                if query.get('revision', [snapshot.revision]) != [snapshot.revision]:
+                    self.error(409, 'error.stale')
+                    return
                 name = url.path.removeprefix('/exports/')
                 self.send(200, snapshot.exports[name], 'application/json' if name.endswith('.json') else 'text/csv')
 
