@@ -29,14 +29,6 @@ export function date(value) {
   return new Intl.DateTimeFormat(formats[locale], {day: '2-digit', month: 'long', year: 'numeric', timeZone: 'UTC'})
     .format(new Date(`${value}T00:00:00Z`));
 }
-export function timestamp(value) {
-  const instant = new Date(value);
-  // Run timestamps are instants, displayed in the browser's local timezone.
-  const localDay = `${instant.getFullYear()}-${String(instant.getMonth() + 1).padStart(2, '0')}-${String(instant.getDate()).padStart(2, '0')}`;
-  const format = Intl.DateTimeFormat.supportedLocalesOf([formats[locale]]).length ? formats[locale] : 'ru-RU';
-  const time = new Intl.DateTimeFormat(format, {hour: '2-digit', minute: '2-digit', second: '2-digit'}).format(instant);
-  return `${date(localDay)} · ${time}`;
-}
 export function translatePage() {
   document.documentElement.lang = locale;
   for (const node of document.querySelectorAll('[data-i18n]')) node.textContent = t(node.dataset.i18n);

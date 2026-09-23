@@ -25,7 +25,7 @@ Cluster descriptions give member count, internal directed edge count, role compo
 - All depth-four accounts carry a boundary caveat; none is labeled terminal.
 - Incoming flows outside the sample are missing, especially for seeds. Undefined ratios stay undefined; values above one are not clamped. Observed sums are not balances, retained wealth or confirmed fund lineage.
 - Only July 2026 intra-bank transfers of at least 5,000 KZT are observed. Smaller transfers and external-bank activity are unknown.
-- No invented customer attributes or external enrichment. No model training or paid/cloud service participates in core reproduction. The optional investigation agent runs separately against immutable saved evidence.
+- No invented customer attributes or external enrichment. No model training, application LLM or paid/cloud service participates in reproduction.
 
 Correctness, coverage, deterministic outputs and browser behavior are tested. AML accuracy, threshold sensitivity and partition robustness remain unmeasured without independent investigation or ground truth.
 
@@ -35,10 +35,20 @@ Graph distance counts connections in either direction, independently of transfer
 
 Uploads run the same validation, analysis and export pipeline as the CLI, in separate local directories. A complete result snapshot and downloadable CSV/manifest bytes are published together after successful processing. Failed input or runtime errors leave the active snapshot intact. Successful upload inputs and outputs are retained for deterministic reproduction; the original startup output is preserved.
 
-## Versioned investigation evidence
 
-`money_graph/methods.py` is the source of calculation thresholds, weights and method settings. `analyze(..., config=...)` and `run(..., config=...)` accept validated overrides. The supported replacement method `connected_components` operates on the same undirected projection; original directed flows remain intact. Method parameters, rendered rule templates, descriptions, daily src→dst/date KZT sums and counts are saved in schema-version-two dashboard artifacts. Older snapshots use their saved explanations and contributions instead of current rules; unavailable daily evidence is explicit.
+## Temporal allocation (rules version 2)
 
-Discovery in `investigation/discovery.py` independently scans all nodes. Shared recipients require at least three distinct incoming peers; repeated connections require at least two distinct dates; community candidates aggregate observed directed cross-community connections. These configurable discovery criteria are investigative leads, not calibrated anomaly scores. Candidate order interleaves pattern/component groups with measured strength and deterministic ties. Counts distinguish all accounts scanned, candidates found, selected and explicitly examined through a validated decision.
+After validation, group non-self transaction amounts by account, direction and calendar date with `math.fsum`. Process outgoing days ascending. Consume the earliest remaining eligible incoming daily bucket first (FIFO), only when the outgoing date is 1 or 2 calendar days later. Decrement both capacities by the allocated amount. Expired incoming amounts and outgoing amounts before receipt cannot be used. This deterministic day-bucket allocation does not invent an intraday order or identify individual banknotes/funds. Duplicate transaction rows remain; source precision is retained without rounding before comparisons.
 
-Agent findings reference retrieved measurement records with exact entities, values and units. Numeric claims must use structured findings; prose remains a hypothesis whose semantic support must be evaluated. Account inspection, onward-connection checks and daily-activity availability checks are required before a candidate decision. The model may choose additional checks; after a bounded amount of follow-up it must save a decision so partial reviews retain useful findings. This requirement does not imply sufficient evidence for a positive suggestion.
+The account `temporal` JSON object reports `incoming_kzt`, `outgoing_kzt` (both excluding self-transfers), `matched_kzt`, `matched_day1_kzt`, `matched_day2_kzt`, `matched_in_share`, and `matches` with incoming/outgoing ISO dates, lag in calendar days and KZT. Day-1 and day-2 values partition the SAME two-day FIFO allocation; they are not independent reruns with different windows. Each amount is used once per account allocation, while a transfer naturally appears as outgoing at its payer and incoming at its recipient.
+
+`same_day_overlap_kzt` sums min(daily incoming, daily outgoing), with dated rows in `same_day`. It is an independent, non-additive descriptive measure: it may overlap amounts used in strict-future matching, never increases transit support and cannot establish direction within the day. Self-transfers are excluded from both measures.
+
+The denominator is ALL observed non-self incoming amounts, including unmatched and late-month receipts; zero incoming gives a null share. `end_window_incoming_kzt` identifies receipts on July 30–31 whose full two-day follow-up extends beyond the documented July 31 collection end. Do not infer the observation end from the last transaction. Missing later data and boundary truncation can suppress support without disproving transit.
+
+Transit retains the monthly out/in ratio 0.8–1.2 and non-seed/peer requirements and additionally requires matched incoming share >=0.8. The new gate is a transparent heuristic. Base confidence, overlap deductions, boundary/seed multipliers, community algorithm and priority weights are unchanged. The manifest records rule version, method, window and gate. This is evidence of compatible timing, not proof that the same money moved onward.
+
+
+## Coexisting patterns (patterns version 1)
+
+`patterns` is an ordered list of localized message descriptors with raw numeric parameters. Collection uses I>=3 and I>=2O; distribution uses O>=5 and O>=2I. Fast transit uses the strict-future FIFO share >=0.8, independently of seed status, monthly ratio or the winning role. Its amount and share use non-self transactions. These labels can coexist, are calculated before role selection and never feed back into priority or confidence. They report observed evidence, not confirmed purpose; an empty list means only that none of these thresholds was met. Mandatory CSVs retain one primary role. The card and dashboard JSON carry the additional patterns without adding CSV columns.

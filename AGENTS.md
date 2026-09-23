@@ -2,7 +2,7 @@
 
 ## Start and verify
 
-Read this file, any more specific `AGENTS.md`, [README.md](README.md), [disclosures index and its entries](disclosures/README.md), and the task's source requirements before editing. The integrator first records the branch/HEAD, `git status --short`, unstaged diff and staged diff; preserve all existing work and the index. In a shared checkout, other agents use that supplied baseline.
+Read this file, any more specific `AGENTS.md`, [README.md](README.md), [DISCLOSURES.md](DISCLOSURES.md), and the task's source requirements before editing. The integrator first records the branch/HEAD, `git status --short`, unstaged diff and staged diff; preserve all existing work and the index. In a shared checkout, other agents use that supplied baseline.
 
 Money Graph is the Python dashboard. Run `./scripts/setup.sh` to create/check its isolated `.venv` and install exact dependency pins. [`.python-version`](.python-version) is the single source of truth for the interpreter; setup and launch enforce it. Use `./scripts/money-graph.sh --serve` to launch. `./scripts/setup.sh --test` also installs browser-test dependencies; install Chromium separately with `.venv/bin/python -m playwright install chromium`.
 
@@ -49,7 +49,7 @@ Name **one integrator** and assign each agent an explicit role, task and exact, 
 
 | Owner | Files / responsibility |
 | --- | --- |
-| Integrator | Root files/configuration (including `AGENTS.md`, `README.md`, `disclosures/**`), `scripts/**`, all dependency manifests and lockfiles, `backend/tsconfig*.json`, `frontend/tsconfig.json`, `frontend/vite.config.ts`; shared API contracts currently embedded in `backend/src/app.ts` and `frontend/src/api.ts`, plus `backend/test/app.test.ts` and future shared contract/schema files; final integration. |
+| Integrator | Root files/configuration (including `AGENTS.md`, `README.md`, `DISCLOSURES.md`), `scripts/**`, all dependency manifests and lockfiles, `backend/tsconfig*.json`, `frontend/tsconfig.json`, `frontend/vite.config.ts`; shared API contracts currently embedded in `backend/src/app.ts` and `frontend/src/api.ts`, plus `backend/test/app.test.ts` and future shared contract/schema files; final integration. |
 | Backend agent | Assigned files in `backend/src/**` except `app.ts`, and `backend/test/**` except `app.test.ts`. |
 | Frontend agent | `frontend/index.html` and assigned files in `frontend/src/**` except `api.ts`. |
 | Docs/domain agent | Assigned files in `docs/money-graph/**` and `docs/hackathon/**`. |
