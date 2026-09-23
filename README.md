@@ -58,7 +58,7 @@ Development uses Vite's `/api` proxy to Express, including a custom backend `POR
 
 ### Continuous integration
 
-The [CI workflow](.github/workflows/hackalem-ci.yml) runs `npm ci`, `npm run typecheck`, `npm test` and `npm run build` on pushes and pull requests. Its single `ubuntu-latest` job has a 15-minute timeout and uses `.nvmrc` and the root lockfile. Tests use synthetic fixtures, loopback HTTP and mocked AI transport; keep the live `openai:check` command outside CI.
+The [CI workflow](.github/workflows/jiggles-ci.yml) runs `npm ci`, `npm run typecheck`, `npm test` and `npm run build` on pushes and pull requests. Its single `ubuntu-latest` job has a 15-minute timeout and uses `.nvmrc` and the root lockfile. Tests use synthetic fixtures, loopback HTTP and mocked AI transport; keep the live `openai:check` command outside CI.
 
 Actions are pinned to exact commits with only `contents: read` permission. Checkout credential persistence and package-manager caching are disabled. The workflow does not deploy or upload artifacts. Remote execution remains unverified; check the run for the submitted revision. Local results and launch procedures are in [integration verification](docs/hackathon/integration-verification.md).
 
