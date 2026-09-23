@@ -16,216 +16,6 @@ from test_money_graph import BASE, expansion_fixture, write_fixture
 
 
 class BrowserJourney(unittest.TestCase):
-    def test_analysis_page_urls_reload_history_and_direct_reopen(self):
-        with tempfile.TemporaryDirectory() as temporary, sync_playwright() as playwright:
-            root = Path(temporary)
-            write_fixture(root / 'first')
-            write_fixture(root / 'second', expansion_fixture())
-            startup, _ = run(root / 'first', root / 'out')
-            saved_id = 'a' * 32
-            run(root / 'second', root / 'out' / 'uploads' / saved_id / 'output')
-            browser = playwright.chromium.launch()
-            try:
-                for restarting in (False, True):
-                    with make_server(None if restarting else startup, root / 'out', 0) as server:
-                        thread = threading.Thread(target=server.serve_forever, daemon=True)
-                        thread.start()
-                        page = browser.new_page(locale='en-GB')
-                        failures, failed_requests = [], []
-                        page.on('pageerror', lambda error: failures.append(str(error)))
-                        page.on('response', lambda response: failed_requests.append(response.url)
-                                if response.status >= 400 else None)
-                        base = f'http://127.0.0.1:{server.server_port}'
-                        try:
-                            if not restarting:
-                                page.goto(base)
-                                expect(page).to_have_url(base + '/analyses')
-                                expect(page.locator('#analysis-home')).to_be_visible()
-                                expect(page.locator('#results')).to_be_hidden()
-                                expect(page.locator('.history-row')).to_have_count(2)
-                                page.locator('[data-analysis-id="startup"]').get_by_role('button', name='View results').click()
-                                expect(page).to_have_url(base + '/analyses/startup')
-                                expect(page.locator('#summary')).to_contain_text('30')
-                                expect(page.locator('#account-area')).to_be_visible()
-                                expect(page.locator('#analysis-home')).to_be_hidden()
-                                page.locator('#zoom-in').click()
-                                transform = page.locator('#graph-viewport').get_attribute('transform')
-                                page.go_back()
-                                expect(page).to_have_url(base + '/analyses')
-                                expect(page.locator('#results')).to_be_hidden()
-                                page.go_forward()
-                                expect(page.locator('#account-area')).to_be_visible()
-                                self.assertEqual(page.locator('#graph-viewport').get_attribute('transform'), transform)
-                                page.locator('#back-analyses').click()
-                                page.reload()
-                                expect(page).to_have_url(base + '/analyses')
-                                expect(page.locator('#results')).to_be_hidden()
-                            # A pasted nested URL also restores the run after an upload-only restart.
-                            page.goto(base + '/analyses/' + saved_id)
-                            expect(page.locator('#account-area')).to_be_visible()
-                            expect(page.locator('#summary')).to_contain_text('80')
-                            expect(page.locator('#analysis-home')).to_be_hidden()
-                            self.assertEqual(server.status()['revision'], saved_id)
-                            # Refresh must obey the URL even when another tab selected another analysis.
-                            response = page.request.post(base + '/api/analyses/startup/open', headers={'Origin': base})
-                            self.assertEqual(response.status, 200)
-                            export = page.locator('.downloads a').first.get_attribute('href')
-                            self.assertEqual(page.request.get(export).status, 409)
-                            page.reload()
-                            expect(page).to_have_url(base + '/analyses/' + saved_id)
-                            expect(page.locator('#account-area')).to_be_visible()
-                            expect(page.locator('#summary')).to_contain_text('80')
-                            self.assertEqual(server.status()['revision'], saved_id)
-                            self.assertEqual(failed_requests, [], 'Nested pages must load all scripts, styles and API data')
-                            page.goto(base + '/analyses/' + '0' * 32)
-                            expect(page.locator('#error')).to_contain_text('no longer available')
-                            expect(page.locator('#analysis-home')).to_be_hidden()
-                            expect(page.locator('#results-workspace')).to_be_hidden()
-                            self.assertEqual(server.status()['revision'], saved_id)
-                            page.locator('#back-analyses').click()
-                            expect(page).to_have_url(base + '/analyses')
-                            expect(page.locator('#analysis-home')).to_be_visible()
-                            expect(page.locator('#error')).to_be_hidden()
-                            page.locator('#show-results').click()
-                            expect(page).to_have_url(base + '/analyses/' + saved_id)
-                            expect(page.locator('#summary')).to_contain_text('80')
-                            expect(page.locator('#account-area')).to_be_visible()
-                            self.assertEqual(failures, [])
-                        finally:
-                            page.close()
-                            server.shutdown()
-                            thread.join()
-            finally:
-                browser.close()
-
-    def test_analysis_home_history_reopen_and_restart(self):
-        with tempfile.TemporaryDirectory() as temporary, sync_playwright() as playwright:
-            root = Path(temporary)
-            write_fixture(root / 'first')
-            write_fixture(root / 'second', expansion_fixture())
-            browser = playwright.chromium.launch()
-            first_id = None
-            first_export = None
-            title = 'July review · Шілде <img src=x>'
-            description = 'Notes for review.\nПроверить переводы.'
-            try:
-                for restarting in (False, True):
-                    with make_server(None, root / 'out', 0) as server:
-                        thread = threading.Thread(target=server.serve_forever, daemon=True)
-                        thread.start()
-                        page = browser.new_page(viewport={'width': 1440, 'height': 1000}, locale='en-GB')
-                        failures = []
-                        page.on('pageerror', lambda error: failures.append(str(error)))
-                        base = f'http://127.0.0.1:{server.server_port}'
-                        try:
-                            page.goto(base)
-                            expect(page.locator('#results')).to_be_hidden()
-                            if not restarting:
-                                expect(page.locator('#history-list')).to_contain_text('No analyses yet')
-                                self.assertLess(page.locator('.upload').bounding_box()['y'], page.locator('.history').bounding_box()['y'])
-                                for index, directory in enumerate(('first', 'second', 'second')):
-                                    page.locator('#show-analyses').click()
-                                    for name in ('nodes', 'edges', 'transactions'):
-                                        page.locator('#upload-' + name).set_input_files(root / directory / f'{name}.parquet')
-                                    page.locator('#analyze').click()
-                                    expect(page.locator('.history-row')).to_have_count(index + 1)
-                                    expect(page.locator('#results')).to_be_visible()
-                                    expect(page.locator('#analyze')).to_be_enabled()
-                                    if index == 0:
-                                        first_id = page.locator('.history-row').get_attribute('data-analysis-id')
-                                        expect(page).to_have_url(base + '/analyses/' + first_id)
-                                        first_export = page.request.get(base + '/exports/nodes_roles.csv').body()
-                                page.locator('#show-analyses').click()
-                                expect(page.locator('.history-row').first).to_contain_text('Same files as an earlier analysis')
-                                expect(page.locator('#summary')).to_contain_text('80')
-                            else:
-                                expect(page.locator('.history-row')).to_have_count(3)
-                                expect(page.locator('#account-area')).to_be_hidden()
-                            first = page.locator(f'.history-row[data-analysis-id="{first_id}"]')
-                            if restarting:
-                                expect(first.locator('h3')).to_have_text(title)
-                                expect(first.locator('.history-description')).to_have_text(description)
-                            first.get_by_role('button', name='Open analysis', exact=True).click()
-                            expect(first).to_contain_text('Current analysis')
-                            expect(page.locator('#account-area')).to_be_visible()
-                            expect(page.locator('#summary')).to_contain_text('30')
-                            self.assertEqual(page.request.get(base + '/exports/nodes_roles.csv').body(), first_export)
-                            page.locator('#show-analyses').click()
-                            first.get_by_role('button', name='Edit details', exact=True).click()
-                            expect(page.locator('#details-dialog')).to_be_visible()
-                            if not restarting:
-                                page.get_by_label('Title', exact=True).fill('   ')
-                                page.get_by_role('button', name='Save changes', exact=True).click()
-                                expect(page.locator('#details-error')).to_contain_text('1–120')
-                                page.get_by_label('Title', exact=True).fill(title)
-                                page.get_by_label('Description (optional)', exact=True).fill(description)
-                                # Language changes preserve an unsaved draft and localize the dialog.
-                                page.evaluate("document.getElementById('language').value = 'kk'; document.getElementById('language').dispatchEvent(new Event('change'))")
-                                expect(page.locator('#details-heading')).to_have_text('Талдау мәліметтерін өңдеу')
-                                expect(page.locator('#details-title')).to_have_value(title)
-                                expect(page.locator('#details-description')).to_have_value(description)
-                                page.get_by_role('button', name='Өзгерістерді сақтау', exact=True).click()
-                                expect(page.locator('#details-dialog')).to_be_hidden()
-                                page.locator('#language').select_option('en')
-                                expect(first.locator('h3')).to_have_text(title)
-                                expect(first.locator('.history-description')).to_have_text(description)
-                                expect(first.locator('img')).to_have_count(0)
-                                expect(page.locator('#selected-analysis')).to_have_text(title)
-                                first.get_by_role('button', name='Edit details', exact=True).click()
-                                page.get_by_label('Title', exact=True).fill('Discard this draft')
-                                page.get_by_role('button', name='Cancel', exact=True).click()
-                                expect(first.locator('h3')).to_have_text(title)
-                                page.reload()
-                                expect(page).to_have_url(base + '/analyses')
-                                expect(page.locator('#results')).to_be_hidden()
-                                expect(first.locator('h3')).to_have_text(title)
-                                expect(first.locator('.history-description')).to_have_text(description)
-                            else:
-                                expect(page.locator('#details-title')).to_have_value(title)
-                                page.get_by_label('Description (optional)', exact=True).fill('')
-                                page.get_by_role('button', name='Save changes', exact=True).click()
-                                expect(page.locator('#details-dialog')).to_be_hidden()
-                                expect(first.locator('.history-description')).to_have_count(0)
-                            self.assertEqual(page.request.get(base + '/exports/nodes_roles.csv').body(), first_export)
-                            for language, heading in [('kk', 'Алдыңғы талдаулар'), ('ru', 'Предыдущие анализы'), ('en', 'Previous analyses')]:
-                                page.locator('#language').select_option(language)
-                                expect(page.locator('#history-title')).to_have_text(heading)
-                                expect(page.locator('.history-row')).to_have_count(3)
-                            if not restarting:
-                                # A damaged older run reports the error without losing the selected analysis.
-                                damaged = page.locator('.history-row').first.get_attribute('data-analysis-id')
-                                (root / 'out' / 'uploads' / damaged / 'output' / 'top_nodes.csv').write_bytes(b'damaged')
-                                page.locator('.history-row').first.get_by_role('button', name='Open analysis').click()
-                                expect(page.locator('#error')).to_contain_text('missing or damaged')
-                                expect(page.locator('#results-workspace')).to_be_hidden()
-                                page.locator('#back-analyses').click()
-                                expect(first).to_contain_text('Current analysis')
-                                page.locator('#show-results').click()
-                                expect(page.locator('#summary')).to_contain_text('30')
-                                expect(page.locator('#account-area')).to_be_visible()
-                                page.locator('#back-analyses').click()
-                                self.assertEqual(page.request.get(base + '/exports/nodes_roles.csv').body(), first_export)
-                            page.evaluate('window.scrollTo(0, 0)')
-                            screenshot = os.environ.get('MONEY_GRAPH_INTERFACE_SCREENSHOT')
-                            if restarting and screenshot:
-                                page.screenshot(path=screenshot)
-                            page.set_viewport_size({'width': 390, 'height': 844})
-                            page.locator('#language').select_option('ru')
-                            first.get_by_role('button', name='Изменить сведения', exact=True).click()
-                            expect(page.locator('#details-dialog')).to_be_visible()
-                            self.assertLessEqual(page.locator('#details-dialog').bounding_box()['width'], 390)
-                            self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'), 390)
-                            if restarting and screenshot:
-                                page.screenshot(path=str(Path(screenshot).with_stem('interface-mobile')))
-                            page.get_by_role('button', name='Отмена', exact=True).click()
-                            self.assertEqual(failures, [])
-                        finally:
-                            page.close()
-                            server.shutdown()
-                            thread.join()
-            finally:
-                browser.close()
-
     def test_search_directed_links_coloring_explanations_isolate_boundary_and_errors(self):
         with tempfile.TemporaryDirectory() as temporary, sync_playwright() as playwright:
             root = Path(temporary)
@@ -246,7 +36,7 @@ class BrowserJourney(unittest.TestCase):
                             page.on('pageerror', lambda error: failures.append(str(error)))
                             page.on('request', lambda request: external.append(request.url) if not request.url.startswith('http://127.0.0.1:') else None)
                             try:
-                                page.goto(f'http://127.0.0.1:{server.server_port}/analyses/startup')
+                                page.goto(f'http://127.0.0.1:{server.server_port}')
                                 expect(page.locator('#account-area')).to_be_visible()
                                 expect(page.locator('.queue-item')).to_have_count(len(result.top))
 
@@ -341,7 +131,7 @@ class BrowserJourney(unittest.TestCase):
                 page.on('request', lambda request: external.append(request.url) if not request.url.startswith('http://127.0.0.1:') else None)
                 base = f'http://127.0.0.1:{server.server_port}'
                 try:
-                    page.goto(base + '/analyses/startup')
+                    page.goto(base)
                     expect(page.locator('#account-area')).to_be_visible()
                     previous_id = page.locator('#account-id').inner_text()
                     previous_summary = page.locator('#summary').inner_text()
@@ -349,7 +139,6 @@ class BrowserJourney(unittest.TestCase):
                     routes = ['/api/overview', '/api/account?gid='+str(BASE), '/exports/nodes_roles.csv', '/exports/clusters.csv', '/exports/top_nodes.csv', '/exports/run_manifest.json']
                     before = {route: page.request.get(base + route).body() for route in routes}
                     def upload(directory):
-                        page.locator('#show-analyses').click()
                         for name in ['nodes', 'edges', 'transactions']:
                             page.locator('#upload-' + name).set_input_files(directory / f'{name}.parquet')
                         page.get_by_role('button', name='Analyze files', exact=True).click()
@@ -358,7 +147,6 @@ class BrowserJourney(unittest.TestCase):
                         expect(page.locator('#upload-error')).to_contain_text(message)
                         expect(page.locator('#analysis-status')).to_contain_text('failed')
                         expect(page.locator('#analyze')).to_be_enabled()
-                        page.locator('#show-results').click()
                         expect(page.locator('#account-id')).to_have_text(previous_id)
                         expect(page.locator('#summary')).to_have_text(previous_summary, use_inner_text=True)
                         expect(page.locator('#queue')).to_have_text(previous_queue, use_inner_text=True)
@@ -482,7 +270,7 @@ class BrowserJourney(unittest.TestCase):
                 page.on('request', lambda request: requests.append(request.url))
                 base = f'http://127.0.0.1:{server.server_port}'
                 try:
-                    page.goto(base + '/analyses/startup')
+                    page.goto(base)
                     expect(page.locator('#account-area')).to_be_visible()
                     page.locator('#gid').fill(str(BASE + 61))
                     page.locator('#search-form button').click()
@@ -491,15 +279,13 @@ class BrowserJourney(unittest.TestCase):
                     expect(page.locator('#graph-caption')).to_contain_text('2 hops')
                     page.locator('#zoom-in').click()
                     page.locator('#color-mode').select_option('cluster')
-                    page.locator('.account details').evaluate('(node) => {node.open = true}')
+                    page.locator('.account > details').evaluate('(node) => {node.open = true}')
                     transform = page.locator('#graph-viewport').get_attribute('transform')
                     edges = page.locator('.edge').count()
                     csvs = {name: page.request.get(base + '/exports/' + name).body()
                             for name in ['nodes_roles.csv', 'clusters.csv', 'top_nodes.csv']}
-                    page.locator('#show-analyses').click()
                     for name in ['nodes', 'edges', 'transactions']:
                         page.locator('#upload-' + name).set_input_files(root / 'input' / f'{name}.parquet')
-                    page.locator('#show-results').click()
                     page.locator('#gid').fill('unsent-search')
                     before = len(requests)
                     for locale, client, analyze, caption, community, month in [
@@ -518,7 +304,7 @@ class BrowserJourney(unittest.TestCase):
                         expect(page.locator('#zoom-in')).to_have_attribute('aria-label', {'en': 'Zoom in', 'kk': 'Үлкейту', 'ru': 'Увеличить'}[locale])
                         expect(page.locator('#gid')).to_have_value('unsent-search')
                         expect(page.locator('#color-mode')).to_have_value('cluster')
-                        self.assertTrue(page.locator('.account details').evaluate('(node) => node.open'))
+                        self.assertTrue(page.locator('.account > details').evaluate('(node) => node.open'))
                         self.assertEqual(page.locator('#graph-viewport').get_attribute('transform'), transform)
                         self.assertEqual(page.locator('.edge').count(), edges)
                         for name in ['nodes', 'edges', 'transactions']:
@@ -534,7 +320,6 @@ class BrowserJourney(unittest.TestCase):
                     page.locator('#language').select_option('kk')
                     expect(page.locator('#error')).to_contain_text('нақты ондық ID')
                     expect(page.locator('#account-area')).to_be_hidden()
-                    page.locator('#show-results').click()
                     page.locator('#gid').fill(str(BASE + 79))
                     page.locator('#search-form button').click()
                     expect(page.locator('#account-warning')).to_contain_text('кейінгі аударымдар белгісіз')
@@ -544,7 +329,6 @@ class BrowserJourney(unittest.TestCase):
                     page.reload()
                     expect(page.locator('html')).to_have_attribute('lang', 'kk')
                     expect(page.locator('#account-area')).to_be_visible()
-                    page.locator('#show-analyses').click()
                     for name in ['nodes', 'edges', 'transactions']:
                         page.locator('#upload-' + name).set_input_files(root / 'bad' / f'{name}.parquet')
                     page.locator('#analyze').click()
@@ -555,7 +339,6 @@ class BrowserJourney(unittest.TestCase):
                     expect(page.locator('#analysis-status')).to_contain_text('Активные результаты сохранены')
                     for name, body in csvs.items():
                         self.assertEqual(body, page.request.get(base + '/exports/' + name).body())
-                    page.locator('#show-analyses').click()
                     for name in ['nodes', 'edges', 'transactions']:
                         page.locator('#upload-' + name).set_input_files(root / 'input' / f'{name}.parquet')
                     page.locator('#analyze').click()
@@ -637,113 +420,3 @@ class BrowserJourney(unittest.TestCase):
                     browser.close()
                     server.shutdown()
                     thread.join()
-
-
-class InvestigationBrowserJourney(unittest.TestCase):
-    def test_review_findings_checks_evidence_follow_up_brief_and_restart(self):
-        from money_graph.investigation.service import ReviewService
-        from money_graph.investigation.provider import AISettings, DEFAULT_MODEL
-        from investigation_fixtures import ScriptedProvider, case
-        with tempfile.TemporaryDirectory() as temporary, sync_playwright() as playwright:
-            root = Path(temporary)
-            write_fixture(root / 'input', case())
-            result, _ = run(root / 'input', root / 'out')
-            browser = playwright.chromium.launch()
-            try:
-                for restarting in (False, True):
-                    with make_server(None if restarting else result, root / 'out', 0) as server:
-                        server.reviews = ReviewService(root / 'out', settings=AISettings(), provider=ScriptedProvider())
-                        thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
-                        base = f'http://127.0.0.1:{server.server_port}'
-                        page = browser.new_page(locale='en-GB', viewport={'width': 1440, 'height': 1100})
-                        errors = []; page.on('pageerror', lambda error: errors.append(str(error)))
-                        try:
-                            page.goto(base + '/analyses/startup')
-                            expect(page.locator('#account-area')).to_be_visible()
-                            expect(page.locator('#review-start')).to_be_enabled()
-                            if not restarting:
-                                page.locator('#gid').fill(str(BASE + 15)); page.locator('#search-form button').click()
-                                expect(page.locator('#account-id')).to_contain_text(str(BASE + 15))
-                                page.locator('#zoom-in').click()
-                                before = page.locator('#graph-viewport').get_attribute('transform')
-                                page.locator('#review-start').click()
-                                expect(page.locator('.suggestion-card')).to_have_count(1, timeout=10000)
-                                expect(page.locator('#review-progress')).to_contain_text('Candidates examined: 1')
-                                page.locator('.suggestion-card').click()
-                                expect(page.locator('#investigation-panel')).to_be_visible()
-                                expect(page.locator('#investigation-content')).to_contain_text('Incoming counterparties')
-                                expect(page.locator('#graph-caption')).to_contain_text('Investigation selection')
-                                page.locator('#tab-checks').click()
-                                expect(page.locator('#investigation-content')).to_contain_text('connections')
-                                page.locator('#tab-evidence').click()
-                                expect(page.locator('#investigation-content')).to_contain_text('KZT')
-                                page.locator('#review-follow-up').click()
-                                expect(page.locator('#review-follow-up')).to_have_attribute('aria-pressed', 'true')
-                                page.locator('#review-brief').click()
-                                expect(page.locator('#brief-dialog')).to_be_visible()
-                                expect(page.locator('#brief-content')).to_contain_text('Shared recipient needs context')
-                                expect(page.locator('#brief-content')).to_contain_text(DEFAULT_MODEL)
-                                page.locator('#brief-close').click()
-                                page.locator('#investigation-close').click()
-                                expect(page.locator('#account-id')).to_contain_text(str(BASE + 15))
-                                self.assertEqual(page.locator('#graph-viewport').get_attribute('transform'), before)
-                                page.locator('.suggestion-card').click()
-                                page.locator('#theme').select_option('dark')
-                                for locale in ('ru', 'kk', 'en'):
-                                    page.locator('#language').select_option(locale)
-                                    expect(page.locator('#investigation-panel')).to_be_visible()
-                                    expect(page.locator('#review-follow-up')).to_have_attribute('aria-pressed', 'true')
-                                page.set_viewport_size({'width': 390, 'height': 844})
-                                self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'), 390)
-                                page.set_viewport_size({'width': 1440, 'height': 1100})
-                                page.screenshot(path='/tmp/money-graph-investigation.png', full_page=True)
-                            else:
-                                expect(page.locator('.suggestion-card')).to_have_count(1)
-                                expect(page.locator('.suggestion-card')).to_contain_text('Marked for follow-up')
-                                expect(page.locator('#review-briefs button')).to_have_count(1)
-                                page.locator('#review-briefs button').click()
-                                expect(page.locator('#brief-content')).to_contain_text('Shared recipient needs context')
-                                page.locator('#brief-close').click()
-                                page.locator('.suggestion-card').click()
-                                page.locator('#tab-evidence').click()
-                                expect(page.locator('#investigation-content')).to_contain_text('Incoming counterparties')
-                            self.assertEqual(errors, [])
-                        finally:
-                            page.close(); server.shutdown(); thread.join()
-            finally: browser.close()
-
-    def test_running_review_stays_with_analysis_and_cancellation_is_terminal(self):
-        from money_graph.investigation.service import ReviewService
-        from money_graph.investigation.provider import AISettings
-        from investigation_fixtures import ScriptedProvider, case
-        entered, release = threading.Event(), threading.Event()
-        scripted = ScriptedProvider()
-        def blocked(payload, timeout):
-            entered.set(); release.wait(timeout=10); return scripted(payload, timeout)
-        with tempfile.TemporaryDirectory() as temporary, sync_playwright() as playwright:
-            root = Path(temporary); write_fixture(root / 'input', case())
-            result, _ = run(root / 'input', root / 'out')
-            other = 'a' * 32; run(root / 'input', root / 'out' / 'uploads' / other / 'output')
-            with make_server(result, root / 'out', 0) as server:
-                server.reviews = ReviewService(root / 'out', settings=AISettings(), provider=blocked)
-                thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
-                browser = playwright.chromium.launch(); page = browser.new_page(locale='en-GB')
-                base = f'http://127.0.0.1:{server.server_port}'
-                try:
-                    page.goto(base + '/analyses/startup'); expect(page.locator('#review-start')).to_be_enabled()
-                    page.locator('#review-start').click(); self.assertTrue(entered.wait(timeout=5))
-                    expect(page.locator('#review-cancel')).to_be_visible()
-                    page.locator('#back-analyses').click()
-                    page.locator(f'[data-analysis-id="{other}"] .history-actions button').last.click()
-                    expect(page).to_have_url(base + '/analyses/' + other)
-                    expect(page.locator('#review-progress')).to_contain_text('No review selected')
-                    expect(page.locator('.suggestion-card')).to_have_count(0)
-                    page.goto(base + '/analyses/startup'); expect(page.locator('#review-cancel')).to_be_visible()
-                    page.locator('#review-cancel').click(); expect(page.locator('#review-progress')).to_contain_text('Cancelled')
-                    release.set()
-                    identifier = next(iter(server.reviews.records)); server.reviews.workers[identifier][0].join(timeout=5)
-                    page.reload(); expect(page.locator('#review-progress')).to_contain_text('Cancelled')
-                    expect(page.locator('.suggestion-card')).to_have_count(0)
-                    self.assertEqual(server.reviews.records[identifier]['state'], 'cancelled')
-                finally:
-                    release.set(); browser.close(); server.shutdown(); thread.join()

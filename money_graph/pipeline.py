@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import importlib.metadata
@@ -23,7 +23,7 @@ import numpy as np
 import pandas as pd
 
 from .i18n import message, render
-from .methods import CONFIG, configuration, rule_parameters, scoring_description
+from .temporal import MIN_SHARE, WINDOW_DAYS, empty_temporal, temporal_features
 
 SCHEMAS = {
     'nodes_roles.csv': ['gid', 'role', 'role_score', 'cluster_id', 'priority_score', 'evidence'],
@@ -37,7 +37,10 @@ WARNINGS = [
     'Observed flows are not complete balances. Incoming transfers outside the sample are unobserved.',
     'July 2026, intra-bank transfers only, at least 5,000 KZT. Smaller transfers and other banks are absent.',
 ]
-
+CONFIG = {'rules_version': 2, 'patterns_version': 1, 'temporal_method': 'daily_fifo_strict_future',
+          'temporal_window_days': WINDOW_DAYS, 'temporal_min_in_share': MIN_SHARE,
+          'cluster_description_version': 2, 'louvain_seed': 42, 'resolution': 1.0, 'threshold': 1e-7,
+          'amount_absolute_tolerance_kzt': 0.01, 'amount_relative_tolerance': 1e-12}
 
 
 class ValidationError(ValueError):
@@ -55,8 +58,6 @@ class Analysis:
     clusters: list[dict]
     top: list[dict]
     profile: dict
-    config: dict = field(default_factory=configuration)
-    daily: list[dict] = field(default_factory=list)
 
 
 def require(condition: bool, key: str, **params: object) -> None:
@@ -64,9 +65,8 @@ def require(condition: bool, key: str, **params: object) -> None:
         raise ValidationError(key, **params)
 
 
-def validate(nodes: pd.DataFrame, edges: pd.DataFrame, tx: pd.DataFrame, config: dict | None = None) -> pd.DataFrame:
+def validate(nodes: pd.DataFrame, edges: pd.DataFrame, tx: pd.DataFrame) -> pd.DataFrame:
     """Fail on bad rows; never deduplicate legitimate repeated transaction rows."""
-    c = configuration(config)
     for name, frame, columns in [('nodes', nodes, ['gid', 'depth', 'is_seed']),
                                   ('edges', edges, ['src', 'dst', 'sum_kzt', 'n_tx', 'depth']),
                                   ('transactions', tx, ['src', 'dst', 'date', 'sum_kzt'])]:
@@ -98,8 +98,6 @@ def validate(nodes: pd.DataFrame, edges: pd.DataFrame, tx: pd.DataFrame, config:
         require(dates.dt.tz is None, 'validation.timezone')
         require((dates == dates.dt.normalize()).all(), 'validation.dayPrecision')
         require(dates.between('2026-07-01', '2026-07-31').all(), 'validation.dateRange')
-    except ValidationError:
-        raise
     except (ValueError, TypeError, AttributeError) as error:
         raise ValidationError('validation.date') from error
     # fsum avoids row-order-dependent accumulation of float64 source values.
@@ -108,7 +106,7 @@ def validate(nodes: pd.DataFrame, edges: pd.DataFrame, tx: pd.DataFrame, config:
     joined = edges.merge(agg, on=['src', 'dst'], how='outer', indicator=True, validate='one_to_one')
     require((joined['_merge'] == 'both').all(), 'validation.pairs')
     require((joined.n_tx == joined['count']).all(), 'validation.counts')
-    require(np.isclose(joined.sum_kzt, joined.total, atol=c['amount_absolute_tolerance_kzt'], rtol=c['amount_relative_tolerance']).all(),
+    require(np.isclose(joined.sum_kzt, joined.total, atol=0.01, rtol=1e-12).all(),
             'validation.sums')
     return tx.assign(date=dates)
 
@@ -123,8 +121,7 @@ def build_graph(nodes: pd.DataFrame, edges: pd.DataFrame) -> nx.DiGraph:
     return graph
 
 
-def communities(graph: nx.DiGraph, config: dict | None = None) -> dict[int, int]:
-    c = configuration(config)
+def communities(graph: nx.DiGraph) -> dict[int, int]:
     projection = nx.Graph()
     projection.add_nodes_from(graph)
     # Reciprocal amounts add; self-transfers do not define community affinity.
@@ -134,49 +131,47 @@ def communities(graph: nx.DiGraph, config: dict | None = None) -> dict[int, int]
             projection.add_edge(a, b, weight=previous + data['sum_kzt'])
     isolated = list(nx.isolates(projection))
     active = projection.subgraph([g for g in projection if projection.degree(g) > 0]).copy()
-    groups = (list(nx.connected_components(active)) if c['community_algorithm'] == 'connected_components' else
-              nx.community.louvain_communities(active, weight='weight', seed=c['louvain_seed'],
-                 resolution=c['resolution'], threshold=c['threshold'])) if active.number_of_edges() else []
+    groups = nx.community.louvain_communities(active, weight='weight', seed=42,
+                 resolution=1.0, threshold=1e-7) if active.number_of_edges() else []
     groups.extend({g} for g in isolated)
     ordered = sorted((sorted(group) for group in groups), key=lambda group: group[0])
     return {gid: cluster for cluster, group in enumerate(ordered) for gid in group}
 
 
-def assign_role(f: dict, config: dict | None = None) -> tuple[str, float, str, list[dict]]:
-    c = configuration(config)
-    params = rule_parameters(c)
+def assign_role(f: dict) -> tuple[str, float, str, list[dict]]:
     i, o, k, ratio = f['in_deg'], f['out_deg'], f['neighbor_clusters'], f['observed_out_in_ratio']
     candidates = []
 
     def add(role: str, score: float, rule: str) -> None:
         candidates.append({'role': role, 'base_score': round(score, 6), 'rule': rule})
 
-    if i >= c['coordinator_in'] and o >= c['coordinator_out'] and k >= c['coordinator_communities']:
-        add('coordinator', c['confidence_base'] + c['confidence_gain'] * min(k / c['coordinator_scale'], 1), render(message('rule.coordinator', **params)))
-    if i >= c['consolidator_min'] and i >= c['fan_ratio'] * o:
-        add('consolidator', c['confidence_base'] + c['confidence_gain'] * min(i / c['consolidator_scale'], 1), render(message('rule.consolidator', **params)))
-    if o >= c['distributor_min'] and o >= c['fan_ratio'] * i:
-        add('distributor', c['confidence_base'] + c['confidence_gain'] * min(o / c['distributor_scale'], 1), render(message('rule.distributor', **params)))
-    if not f['is_seed'] and i > 0 and o > 0 and ratio is not None and 1 - c['transit_tolerance'] <= ratio <= 1 + c['transit_tolerance']:
-        add('transit', c['confidence_base'] + c['confidence_gain'] * max(0, 1 - abs(ratio - 1) / c['transit_tolerance']), render(message('rule.transit', **params)))
+    if i >= 2 and o >= 2 and k >= 3:
+        add('coordinator', .55 + .35 * min(k / 6, 1), render(message('rule.coordinator')))
+    if i >= 3 and i >= 2 * o:
+        add('consolidator', .55 + .35 * min(i / 10, 1), render(message('rule.consolidator')))
+    if o >= 5 and o >= 2 * i:
+        add('distributor', .55 + .35 * min(o / 20, 1), render(message('rule.distributor')))
+    temporal_share = f['temporal']['matched_in_share']
+    if (not f['is_seed'] and i > 0 and o > 0 and ratio is not None and .8 <= ratio <= 1.2
+            and temporal_share is not None and temporal_share >= MIN_SHARE):
+        add('transit', .55 + .35 * max(0, 1 - abs(ratio - 1) / .2), render(message('rule.transit')))
     if f['depth'] < 4 and not f['is_seed'] and i > 0 and o == 0:
-        add('terminal', c['terminal_base'] + c['terminal_gain'] * min(i / c['terminal_scale'], 1), render(message('rule.terminal', **params)))
+        add('terminal', .45 + .15 * min(i / 5, 1), render(message('rule.terminal')))
     if not candidates:
-        add('peripheral', c['peripheral_isolate'] if i + o == 0 else c['peripheral_connected'], render(message('rule.peripheral', **params)))
+        add('peripheral', .1 if i + o == 0 else .2, render(message('rule.peripheral')))
     candidates.sort(key=lambda c: (-c['base_score'], ROLES.index(c['role'])))
     best = candidates[0]
-    score = best['base_score'] - (c['ambiguity_deduction'] if len(candidates) > 1 else 0)
-    score *= c['boundary_multiplier'] if f['depth'] == 4 else 1
-    score *= c['seed_multiplier'] if f['is_seed'] else 1
+    score = best['base_score'] - (.1 if len(candidates) > 1 else 0)
+    score *= .6 if f['depth'] == 4 else 1
+    score *= .85 if f['is_seed'] else 1
     return best['role'], round(score, 6), best['rule'], candidates
 
 
 def cluster_description_parts(members: list[dict], internal: list[tuple], graph: nx.DiGraph,
-                              membership: dict[int, int], config: dict | None = None) -> list[dict]:
+                              membership: dict[int, int]) -> list[dict]:
     """Measured motifs as message descriptors, independent of display language."""
-    c = configuration(config)
-    fan_in = [f for f in members if f['in_deg'] >= c['consolidator_min'] and f['in_deg'] >= c['fan_ratio'] * f['out_deg']]
-    fan_out = [f for f in members if f['out_deg'] >= c['distributor_min'] and f['out_deg'] >= c['fan_ratio'] * f['in_deg']]
+    fan_in = [f for f in members if f['in_deg'] >= 3 and f['in_deg'] >= 2 * f['out_deg']]
+    fan_out = [f for f in members if f['out_deg'] >= 5 and f['out_deg'] >= 2 * f['in_deg']]
     bridges = []
     for f in members:
         gid = f['gid']
@@ -185,7 +180,7 @@ def cluster_description_parts(members: list[dict], internal: list[tuple], graph:
         if incoming and outgoing and len(incoming | outgoing) >= 2:
             bridges.append((f, len(incoming | outgoing)))
     parts = [message('cluster.intro', accounts=len(members), links=len(internal)),
-             message('cluster.fans', incoming=len(fan_in), outgoing=len(fan_out), consolidator=c['consolidator_min'], distributor=c['distributor_min'], ratio=c['fan_ratio'])]
+             message('cluster.fans', incoming=len(fan_in), outgoing=len(fan_out))]
     for candidates, direction, key in [(fan_in, 'in_deg', 'cluster.fanIn'), (fan_out, 'out_deg', 'cluster.fanOut')]:
         if candidates:
             f = min(candidates, key=lambda f: (-f[direction], f['gid']))
@@ -206,18 +201,31 @@ def cluster_description_parts(members: list[dict], internal: list[tuple], graph:
 
 
 def cluster_description(members: list[dict], internal: list[tuple], graph: nx.DiGraph,
-                        membership: dict[int, int], config: dict | None = None) -> str:
-    return ' '.join(render(part) for part in cluster_description_parts(members, internal, graph, membership, config))
+                        membership: dict[int, int]) -> str:
+    return ' '.join(render(part) for part in cluster_description_parts(members, internal, graph, membership))
+
+
+def observed_patterns(f: dict) -> list[dict]:
+    """Independent measured behaviors; no competition or inferred fund identity."""
+    patterns = []
+    if f['in_deg'] >= 3 and f['in_deg'] >= 2 * f['out_deg']:
+        patterns.append(message('pattern.collection', incoming=f['in_deg'], outgoing=f['out_deg']))
+    share = f['temporal']['matched_in_share']
+    if share is not None and share >= MIN_SHARE:
+        patterns.append(message('pattern.transit', amount=f['temporal']['matched_kzt'], share=share))
+    if f['out_deg'] >= 5 and f['out_deg'] >= 2 * f['in_deg']:
+        patterns.append(message('pattern.distribution', incoming=f['in_deg'], outgoing=f['out_deg']))
+    return patterns
 
 
 def analyze(nodes: pd.DataFrame, edges: pd.DataFrame, tx: pd.DataFrame,
-            on_validated: Callable[[], None] | None = None, config: dict | None = None) -> Analysis:
-    c = configuration(config)
-    tx = validate(nodes, edges, tx, c)
+            on_validated: Callable[[], None] | None = None) -> Analysis:
+    tx = validate(nodes, edges, tx)
     if on_validated:
         on_validated()
     graph = build_graph(nodes, edges)
-    membership = communities(graph, c)
+    membership = communities(graph)
+    temporal = temporal_features(tx)
     days: dict[int, set[str]] = {gid: set() for gid in graph}
     for r in tx.itertuples(index=False):
         day = r.date.date().isoformat()
@@ -239,28 +247,33 @@ def analyze(nodes: pd.DataFrame, edges: pd.DataFrame, tx: pd.DataFrame,
             observed_out_in_ratio=outflow / inflow if inflow > 0 else None,
             boundary=attrs['depth'] == 4, active_days=len(days[gid]),
             first_date=min(days[gid]) if days[gid] else None, last_date=max(days[gid]) if days[gid] else None,
-            self_transfer=graph.has_edge(gid, gid)))
+            self_transfer=graph.has_edge(gid, gid), temporal=temporal.get(gid, empty_temporal())))
     max_volume = max(f['in_kzt'] + f['out_kzt'] for f in features)
     for f in features:
-        role, score, rule, candidates = assign_role(f, c)
+        f['patterns'] = observed_patterns(f)
+        role, score, rule, candidates = assign_role(f)
         volume = f['in_kzt'] + f['out_kzt']
         contributions = {
-            'incoming_peers': round(c['priority_in_weight'] * min(f['in_deg'] / c['priority_in_scale'], 1), 6),
-            'outgoing_peers': round(c['priority_out_weight'] * min(f['out_deg'] / c['priority_out_scale'], 1), 6),
-            'cross_cluster_peers': round(c['priority_cross_weight'] * min(f['cross_cluster_peers'] / c['priority_cross_scale'], 1), 6),
-            'transaction_count': round(c['priority_tx_weight'] * min((f['in_tx'] + f['out_tx']) / c['priority_tx_scale'], 1), 6),
-            'observed_volume': round(c['priority_volume_weight'] * math.log1p(volume) / math.log1p(max_volume), 6) if max_volume else 0.0,
+            'incoming_peers': round(.30 * min(f['in_deg'] / 10, 1), 6),
+            'outgoing_peers': round(.25 * min(f['out_deg'] / 10, 1), 6),
+            'cross_cluster_peers': round(.20 * min(f['cross_cluster_peers'] / 5, 1), 6),
+            'transaction_count': round(.15 * min((f['in_tx'] + f['out_tx']) / 30, 1), 6),
+            'observed_volume': round(.10 * math.log1p(volume) / math.log1p(max_volume), 6) if max_volume else 0.0,
         }
         caveat = 'Depth 4: onward unknown.' if f['boundary'] else 'Partial observed network.'
         if f['is_seed']:
             caveat += ' Seed inflow incomplete.'
         evidence = (f"Hypothesis: {role}; peers in/out={f['in_deg']}/{f['out_deg']}; "
                     f"KZT in/out={f['in_kzt']:.4g}/{f['out_kzt']:.4g}. {caveat}")
+        if role == 'transit':
+            evidence += f" 1-2d matched={f['temporal']['matched_in_share']:.1%} in."
         require(len(evidence) <= 200, 'validation.evidence')
         priority = round(sum(contributions.values()), 6)
         why = (f"{evidence} Priority={priority:.6f}: " + '; '.join(f'{k}={v:.6f}' for k, v in contributions.items()) +
                f". Rule: {rule} Neighbor communities={f['neighbor_clusters']}; "
-               f"cross-community peers={f['cross_cluster_peers']}; transactions in/out={f['in_tx']}/{f['out_tx']}.")
+               f"cross-community peers={f['cross_cluster_peers']}; transactions in/out={f['in_tx']}/{f['out_tx']}. "
+               f"FIFO 1-2d KZT={f['temporal']['matched_kzt']:.6f}; "
+               f"same-day overlap (not additive; order unknown) KZT={f['temporal']['same_day_overlap_kzt']:.6f}.")
         f.update(role=role, role_score=score, role_rule=rule, candidates=candidates, priority_score=priority,
                  priority_contributions=contributions, evidence=evidence, why=why)
     ranked = sorted(features, key=lambda f: (-f['priority_score'], f['gid']))
@@ -270,7 +283,7 @@ def analyze(nodes: pd.DataFrame, edges: pd.DataFrame, tx: pd.DataFrame,
     for cid in sorted(set(membership.values())):
         members = [f for f in ranked if f['cluster_id'] == cid]
         internal = [(a, b, d) for a, b, d in graph.edges(data=True) if membership[a] == cid == membership[b]]
-        hypothesis = cluster_description(members, internal, graph, membership, c)
+        hypothesis = cluster_description(members, internal, graph, membership)
         clusters.append(dict(cluster_id=cid, n_nodes=len(members), n_seed=sum(f['is_seed'] for f in members),
             sum_kzt_internal=math.fsum(d['sum_kzt'] for _, _, d in internal),
             top_gids=[str(f['gid']) for f in members[:5]], hypothesis=hypothesis))
@@ -283,27 +296,11 @@ def analyze(nodes: pd.DataFrame, edges: pd.DataFrame, tx: pd.DataFrame,
         date_start=tx.date.min().date().isoformat() if len(tx) else None,
         date_end=tx.date.max().date().isoformat() if len(tx) else None,
         role_counts=dict(sorted(Counter(f['role'] for f in features).items())))
-    daily = [dict(src=str(int(src)), dst=str(int(dst)), date=day.date().isoformat(),
-                  sum_kzt=math.fsum(group.sum_kzt), n_tx=len(group))
-             for (src, dst, day), group in tx.groupby(['src', 'dst', 'date'], sort=True)]
-    return Analysis(graph, features, clusters, top, profile, c, daily)
+    return Analysis(graph, features, clusters, top, profile)
 
 
 def dashboard_data(result: Analysis) -> dict:
-    membership = {n['gid']: n['cluster_id'] for n in result.nodes}
-    clusters = []
-    for cluster in result.clusters:
-        cid = cluster['cluster_id']
-        members = [n for n in result.nodes if n['cluster_id'] == cid]
-        internal = [(a, b, d) for a, b, d in result.graph.edges(data=True) if membership[a] == cid == membership[b]]
-        clusters.append(dict(cluster, description_parts=cluster_description_parts(members, internal, result.graph, membership, result.config),
-                             role_counts=dict(sorted(Counter(n['role'] for n in members).items()))))
-    # Templates are frozen too: updating translations must not rewrite old methods.
-    catalogs = {locale: {key: value for key, value in json.loads((Path(__file__).parent / f'static/locales/{locale}.json').read_text()).items()
-                        if key.startswith(('rule.', 'cluster.'))} for locale in ('en', 'kk', 'ru')}
-    return dict(schema_version=2, profile=result.profile, config=result.config, warnings=WARNINGS,
-        methods=scoring_description(result.config), rule_parameters=rule_parameters(result.config), method_catalogs=catalogs,
-        clusters=clusters, daily=result.daily,
+    return dict(profile=result.profile, config=CONFIG, warnings=WARNINGS, clusters=result.clusters,
         top=[dict(r, gid=str(r['gid'])) for r in result.top],
         nodes=[dict(n, gid=str(n['gid'])) for n in result.nodes],
         edges=[dict(src=str(a), dst=str(b), **d) for a, b, d in result.graph.edges(data=True)])
@@ -317,7 +314,7 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def run(data_dir: Path, out_dir: Path, progress: Callable[[str], None] | None = None, config: dict | None = None) -> tuple[Analysis, dict]:
+def run(data_dir: Path, out_dir: Path, progress: Callable[[str], None] | None = None) -> tuple[Analysis, dict]:
     started = time.perf_counter()
     started_utc = datetime.now(timezone.utc).isoformat()
     names = ['nodes.parquet', 'edges.parquet', 'transactions.parquet']
@@ -332,7 +329,7 @@ def run(data_dir: Path, out_dir: Path, progress: Callable[[str], None] | None = 
         except (ValueError, OSError) as error:
             raise ValidationError('validation.parquet', name=name) from error
     require(hashes == {name: sha256(data_dir / name) for name in names}, 'validation.changed')
-    result = analyze(*frames, on_validated=(lambda: progress('analyzing')) if progress else None, config=config)
+    result = analyze(*frames, on_validated=(lambda: progress('analyzing')) if progress else None)
     if progress:
         progress('exporting')
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -347,7 +344,7 @@ def run(data_dir: Path, out_dir: Path, progress: Callable[[str], None] | None = 
         output_hashes = {name: sha256(stage / name) for name in [*SCHEMAS, 'dashboard.json']}
         for name in output_hashes:
             (stage / name).replace(out_dir / name)
-    manifest = dict(config=result.config, inputs=hashes, outputs=output_hashes, profile=result.profile,
+    manifest = dict(config=CONFIG, inputs=hashes, outputs=output_hashes, profile=result.profile,
         versions={name: importlib.metadata.version(name) for name in ['pandas', 'pyarrow', 'networkx', 'numpy']},
         python=platform.python_version(), machine=platform.machine(), platform=platform.platform(),
         started_utc=started_utc, elapsed_seconds=round(time.perf_counter() - started, 6))

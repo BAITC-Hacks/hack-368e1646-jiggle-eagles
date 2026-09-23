@@ -19,7 +19,7 @@ class FilePreviewJourney(unittest.TestCase):
                     ('fr-FR', 'Open the local dashboard', 'en'),
                 ]:
                     with self.subTest(locale=locale):
-                        page = browser.new_page(locale=locale, color_scheme='light', viewport={'width': 390, 'height': 844})
+                        page = browser.new_page(locale=locale, viewport={'width': 390, 'height': 844})
                         requests, errors, failed = [], [], []
                         page.on('request', lambda request: requests.append(request.url))
                         page.on('pageerror', lambda error: errors.append(str(error)))
@@ -32,7 +32,7 @@ class FilePreviewJourney(unittest.TestCase):
                             expect(page.locator('#file-preview code')).to_have_text('./scripts/money-graph.sh --serve --upload-only')
                             expect(page.locator('input, button, form')).to_have_count(0)
                             # Relative assets must load even from a file URL.
-                            self.assertEqual(page.locator('header').evaluate('(node) => getComputedStyle(node).backgroundColor'), 'rgb(255, 255, 255)')
+                            self.assertEqual(page.locator('header').evaluate('(node) => getComputedStyle(node).backgroundColor'), 'rgb(16, 44, 57)')
                             self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'), 390)
                             self.assertFalse(any('/api/' in url or url.startswith(('http:', 'https:')) for url in requests))
                             self.assertFalse(any(url.endswith('/app.js') for url in requests))
