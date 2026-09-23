@@ -1,11 +1,17 @@
-import {initialize, t, number, date, setLocale, currentLocale} from './i18n.js';
+import {initialize, t, number, date, timestamp, setLocale, currentLocale} from './i18n.js';
 const $ = (id) => document.getElementById(id);
-const palette = ['#087e8b', '#9b5bb5', '#d98839', '#527bc2', '#c95c72', '#61843b', '#b86d39', '#546e7a'];
-const roleColors = {consolidator: '#087e8b', transit: '#527bc2', distributor: '#d98839', terminal: '#9b5bb5', coordinator: '#c95c72', peripheral: '#80918f'};
+// SVG fills inherit theme variables: recoloring never rerenders or resets the graph.
+const palette = Array.from({length: 8}, (_, index) => `var(--cluster-${index})`);
+const roleColors = Object.fromEntries(['consolidator', 'transit', 'distributor', 'terminal', 'coordinator', 'peripheral']
+  .map(role => [role, `var(--role-${role})`]));
 const score = (n) => number(n, {minimumFractionDigits: 3, maximumFractionDigits: 3});
 const role = (value) => t(`role.${value}`);
 let overview = null;
 let analysisStatus = null;
+let historyData = null;
+let openingAnalysis = false;
+let editingAnalysis = null;
+let savingDetails = false;
 const messages = new Map();
 let current = null;
 let activeRevision = null;
@@ -13,6 +19,78 @@ let graphRequest = null;
 let camera = {scale: 1, x: 0, y: 0};
 let drag = null;
 let request = null;
+
+// The URL is the source of truth; route changes preserve an already loaded graph.
+let routeVersion = 0;
+let routeTask = Promise.resolve();
+let pendingUpload = false;
+const routeId = () => location.pathname.match(/^\/analyses\/(startup|[0-9a-f]{32})$/)?.[1] || null;
+function showView(focus = false) {
+  const id = routeId();
+  $('analysis-home').hidden = Boolean(id);
+  $('results').hidden = !id;
+  $('results-workspace').hidden = !id || activeRevision !== id || !overview;
+  $('show-analyses').setAttribute('aria-pressed', String(!id));
+  $('show-results').setAttribute('aria-pressed', String(Boolean(id)));
+  const selected = historyData?.analyses.find(entry => entry.id === id);
+  document.title = `${selected ? analysisName(selected) : t(id ? 'history.results' : 'home.title')} · Money Graph`;
+  if (focus) {
+    (id ? $('back-analyses') : $('show-analyses')).focus({preventScroll: true});
+    window.scrollTo({top: 0, behavior: 'instant'});
+  }
+}
+function navigate(id = null) {
+  const path = id ? `/analyses/${encodeURIComponent(id)}` : '/analyses';
+  if (location.pathname !== path) history.pushState(null, '', path);
+  return renderRoute(true);
+}
+function renderRoute(focus = false) {
+  const version = ++routeVersion;
+  const id = routeId();
+  $('error').hidden = true;
+  showView(focus);
+  if (!id) return Promise.resolve();
+  if (activeRevision !== id || !overview) {
+    showMessage('summary', {key: 'summary.loading'});
+    $('selected-analysis').textContent = '';
+  }
+  // Serialize opens so fast Back/Forward cannot publish saved runs out of order.
+  routeTask = routeTask.then(async () => {
+    if (version !== routeVersion) return;
+    openingAnalysis = true;
+    uploadBusy(true);
+    try {
+      if (activeRevision !== id || !overview) {
+        if (analysisStatus?.revision !== id) {
+          const response = await fetch(`/api/analyses/${encodeURIComponent(id)}/open`, {method: 'POST'});
+          const status = await response.json();
+          if (!response.ok) throw new ApiError(status, response.status);
+          analysisStatus = status;
+          renderStatus();
+        }
+        await loadOverview(id);
+      }
+      if (version === routeVersion) {
+        messages.delete('summary');
+        renderOverview();
+        showView();
+      }
+    } catch (error) {
+      if (version === routeVersion) {
+        showMessage('summary', {key: 'summary.unavailable'});
+        showError('error', error);
+      }
+    } finally {
+      openingAnalysis = false;
+      uploadBusy(analysisStatus && ['receiving', 'validating', 'analyzing', 'exporting'].includes(analysisStatus.state));
+    }
+  });
+  return routeTask;
+}
+$('show-analyses').addEventListener('click', () => navigate());
+$('back-analyses').addEventListener('click', () => navigate());
+$('show-results').addEventListener('click', () => navigate(activeRevision || analysisStatus?.revision));
+window.addEventListener('popstate', () => renderRoute(true));
 
 function element(tag, text, className) {
   const node = document.createElement(tag);
@@ -111,7 +189,7 @@ function renderAccount(reset = false) {
     metric(t('metric.outgoing'), number(a.out_kzt), t('metric.peers', {peers: number(a.out_deg), transfers: number(a.out_tx)})),
     metric(t('metric.confidence'), score(a.role_score), t('metric.activity', {depth: number(a.depth), days: number(a.active_days)})),
     metric(t('metric.priority'), score(a.priority_score), t('community.name', {id: a.cluster_id})));
-  $('rule').textContent = t(`rule.${a.role}`);
+  $('rule').textContent = t(a.role === 'transit' && !a.temporal ? 'rule.transitLegacy' : `rule.${a.role}`);
   // Keep the canonical English export evidence; other views use the same measured fields.
   $('evidence').textContent = currentLocale() === 'en' ? a.evidence : t('evidence.summary', {
     role: role(a.role), incoming: number(a.in_deg), outgoing: number(a.out_deg),
@@ -123,16 +201,21 @@ function renderAccount(reset = false) {
     $('evidence').after(patterns);
   }
   patterns.replaceChildren(element('h3', t('pattern.title')));
-  const patternList = element('ul');
-  for (const part of a.patterns) {
-    const params = Object.fromEntries(Object.entries(part.params).map(([key, value]) =>
-      [key, key === 'share' ? number(value, {style: 'percent', maximumFractionDigits: 1}) : number(value)]));
-    const item = element('li', t(part.key, params));
-    item.dataset.pattern = part.key;
-    patternList.append(item);
+  // Saved runs created before these features retain their original schema.
+  if (a.patterns === undefined) {
+    patterns.append(element('p', t('pattern.unavailable'), 'muted'));
+  } else {
+    const patternList = element('ul');
+    for (const part of a.patterns) {
+      const params = Object.fromEntries(Object.entries(part.params).map(([key, value]) =>
+        [key, key === 'share' ? number(value, {style: 'percent', maximumFractionDigits: 1}) : number(value)]));
+      const item = element('li', t(part.key, params));
+      item.dataset.pattern = part.key;
+      patternList.append(item);
+    }
+    patterns.append(a.patterns.length ? patternList : element('p', t('pattern.none')),
+      element('p', t('pattern.caveat'), 'muted'));
   }
-  patterns.append(a.patterns.length ? patternList : element('p', t('pattern.none')),
-    element('p', t('pattern.caveat'), 'muted'));
   let temporal = $('temporal');
   if (!temporal) {
     temporal = element('section');
@@ -140,22 +223,27 @@ function renderAccount(reset = false) {
     patterns.after(temporal);
   }
   const tf = a.temporal;
-  temporal.replaceChildren(element('h3', t('temporal.title')),
-    element('p', t('temporal.matched', {
-      amount: number(tf.matched_kzt), day1: number(tf.matched_day1_kzt), day2: number(tf.matched_day2_kzt),
-      share: tf.matched_in_share === null ? t('scoring.undefined') : number(tf.matched_in_share, {style: 'percent', maximumFractionDigits: 1})})),
-    element('p', t('temporal.sameDay', {amount: number(tf.same_day_overlap_kzt)})),
-    element('p', t('temporal.caveat'), 'muted'));
-  if (tf.end_window_incoming_kzt > 0) temporal.append(element('p', t('temporal.endWindow', {amount: number(tf.end_window_incoming_kzt)}), 'warning'));
-  const details = element('details');
-  details.append(element('summary', t('temporal.details')));
-  const allocations = element('ul');
-  for (const match of tf.matches) allocations.append(element('li', t('temporal.match', {
-    incoming: date(match.in_date), outgoing: date(match.out_date), amount: number(match.amount_kzt), days: number(match.lag_days)})));
-  for (const overlap of tf.same_day) allocations.append(element('li', t('temporal.overlap', {
-    date: date(overlap.date), amount: number(overlap.amount_kzt)})));
-  details.append(allocations);
-  temporal.append(details);
+  temporal.replaceChildren(element('h3', t('temporal.title')));
+  if (tf === undefined) {
+    temporal.append(element('p', t('temporal.unavailable'), 'muted'));
+  } else {
+    temporal.append(
+      element('p', t('temporal.matched', {
+        amount: number(tf.matched_kzt), day1: number(tf.matched_day1_kzt), day2: number(tf.matched_day2_kzt),
+        share: tf.matched_in_share === null ? t('scoring.undefined') : number(tf.matched_in_share, {style: 'percent', maximumFractionDigits: 1})})),
+      element('p', t('temporal.sameDay', {amount: number(tf.same_day_overlap_kzt)})),
+      element('p', t('temporal.caveat'), 'muted'));
+    if (tf.end_window_incoming_kzt > 0) temporal.append(element('p', t('temporal.endWindow', {amount: number(tf.end_window_incoming_kzt)}), 'warning'));
+    const details = element('details');
+    details.append(element('summary', t('temporal.details')));
+    const allocations = element('ul');
+    for (const match of tf.matches) allocations.append(element('li', t('temporal.match', {
+      incoming: date(match.in_date), outgoing: date(match.out_date), amount: number(match.amount_kzt), days: number(match.lag_days)})));
+    for (const overlap of tf.same_day) allocations.append(element('li', t('temporal.overlap', {
+      date: date(overlap.date), amount: number(overlap.amount_kzt)})));
+    details.append(allocations);
+    temporal.append(details);
+  }
   const scoring = $('scoring');
   scoring.replaceChildren(element('p', t('scoring.ratio', {
     ratio: a.observed_out_in_ratio === null ? t('scoring.undefined') : number(a.observed_out_in_ratio)})));
@@ -203,7 +291,7 @@ function drawGraph(reset = false) {
   const graph = $('graph');
   const defs = svg('defs');
   const arrow = svg('marker', {id: 'arrow', markerWidth: 8, markerHeight: 8, refX: 7, refY: 4, orient: 'auto'});
-  arrow.append(svg('path', {d: 'M0 0 L8 4 L0 8 Z', fill: '#78929a'}));
+  arrow.append(svg('path', {d: 'M0 0 L8 4 L0 8 Z', fill: 'var(--graph-edge)'}));
   defs.append(arrow);
   const viewport = svg('g', {id: 'graph-viewport'});
   graph.replaceChildren(defs, viewport);
@@ -226,7 +314,9 @@ function drawGraph(reset = false) {
     const point = points.get(node.gid);
     const group = svg('g', {class: 'graph-node', tabindex: '0', role: 'button', 'aria-label': t('graph.inspect', {gid: node.gid}), 'data-gid': node.gid});
     group.append(svg('title', {}, t('graph.nodeTitle', {gid: node.gid, role: role(node.role), cluster: node.cluster_id})));
-    group.append(svg('circle', {cx: point.x, cy: point.y, r: node.gid === center.gid ? 22 : 15, fill: color(node), stroke: node.boundary ? '#9a771d' : '#fff', 'stroke-width': 3, 'stroke-dasharray': node.boundary ? '4 3' : 'none'}));
+    if (node.gid === center.gid) group.append(svg('circle', {cx: point.x, cy: point.y, r: 29,
+      fill: 'none', stroke: 'var(--brand)', 'stroke-width': 2, class: 'selection-ring'}));
+    group.append(svg('circle', {cx: point.x, cy: point.y, r: node.gid === center.gid ? 22 : 15, fill: color(node), stroke: node.boundary ? 'var(--boundary)' : 'var(--surface)', 'stroke-width': 3, 'stroke-dasharray': node.boundary ? '4 3' : 'none'}));
     group.append(svg('text', {x: point.x, y: point.y + 34, 'text-anchor': 'middle', class: 'node-label'}, node.gid));
     group.append(svg('text', {x: point.x, y: point.y + 48, 'text-anchor': 'middle', class: 'node-role'}, `${role(node.role)} · C${node.cluster_id}${node.boundary ? ' · ' + t('graph.depthFour') : ''}`));
     group.addEventListener('click', () => inspect(node.gid));
@@ -330,7 +420,7 @@ $('graph').addEventListener('keydown', event => {
   }
 });
 function renderOverview() {
-  if (!overview) return;
+  if (!overview || (routeId() && routeId() !== activeRevision)) return;
   const stats = [['accounts', 'nodes'], ['edges', 'edges'], ['transactions', 'transactions'], ['clusters', 'clusters'], ['isolates', 'isolates']];
   $('summary').replaceChildren(...stats.map(([key, field]) => {
     const stat = element('div', undefined, 'stat');
@@ -349,23 +439,134 @@ function renderOverview() {
     return button;
   }));
 }
-async function loadOverview() {
+async function loadOverview(id) {
+  if (request) request.abort();
+  if (graphRequest) graphRequest.abort();
+  const data = await get('/api/overview');
+  if (data.revision !== id) throw new ApiError({error_message: {key: 'error.stale'}}, 409);
+  current = null;
+  $('account-area').hidden = true;
+  overview = data;
+  activeRevision = data.revision;
+  for (const link of document.querySelectorAll('.downloads a')) {
+    const url = new URL(link.href);
+    url.searchParams.set('revision', id);
+    link.href = url.href;
+  }
+  $('show-results').disabled = false;
+  messages.delete('summary');
+  messages.delete('queue-count');
+  renderOverview();
+  renderHistory();
+  if (data.top.length) await inspect(data.top[0].gid);
+}
+function renderHistory() {
+  if (!historyData) return;
+  const entries = historyData.analyses;
+  $('history-count').textContent = t('history.count', {count: number(entries.length)});
+  $('history-warning').hidden = !historyData.unavailable_count;
+  $('history-warning').textContent = t('history.unavailable', {count: number(historyData.unavailable_count)});
+  const selected = entries.find(entry => entry.id === (routeId() || activeRevision || analysisStatus?.revision));
+  $('selected-analysis').textContent = selected ? analysisName(selected) : '';
+  showView();
+  if (!entries.length) {
+    const empty = element('div', undefined, 'history-empty');
+    empty.append(element('strong', t('history.empty')), element('p', t('history.emptyHelp'), 'muted'));
+    $('history-list').replaceChildren(empty);
+    return;
+  }
+  $('history-list').replaceChildren(...entries.map(entry => {
+    const active = entry.id === (activeRevision || analysisStatus?.revision);
+    const row = element('article', undefined, 'history-row' + (active ? ' active' : ''));
+    row.dataset.analysisId = entry.id;
+    const info = element('div', undefined, 'history-info');
+    info.append(element('h3', analysisName(entry)));
+    if (entry.description) info.append(element('p', entry.description, 'history-description'));
+    if (entry.title) info.append(element('p', timestamp(entry.started_utc), 'muted'));
+    info.append(element('p', t('history.stats', {
+      nodes: number(entry.profile.nodes), edges: number(entry.profile.edges),
+      transactions: number(entry.profile.transactions), seconds: number(entry.elapsed_seconds)
+    }), 'muted'), element('p', t('history.id', {id: entry.id}), 'history-id'));
+    const tags = element('div', undefined, 'history-tags');
+    if (active) tags.append(element('span', t('history.current'), 'history-tag'));
+    if (entry.duplicate_of) tags.append(element('span', t('history.duplicate'), 'history-tag'));
+    info.append(tags);
+    const button = element('button', t(active ? 'history.viewing' : 'history.open'));
+    button.type = 'button';
+    button.disabled = openingAnalysis || $('upload-form').getAttribute('aria-busy') === 'true';
+    button.addEventListener('click', () => navigate(entry.id));
+    const actions = element('div', undefined, 'history-actions');
+    const edit = element('button', t('details.edit'), 'secondary edit-details');
+    edit.type = 'button';
+    edit.addEventListener('click', () => editAnalysis(entry));
+    actions.append(edit, button);
+    row.append(info, actions);
+    return row;
+  }));
+}
+function analysisName(entry) {
+  return entry.title || t(entry.id === 'startup' ? 'history.startup' : 'history.analysis', {date: timestamp(entry.started_utc)});
+}
+function editAnalysis(entry) {
+  editingAnalysis = entry.id;
+  $('details-title').value = analysisName(entry);
+  $('details-description').value = entry.description || '';
+  $('details-error').hidden = true;
+  $('details-dialog').showModal();
+  $('details-title').focus();
+  $('details-title').select();
+}
+$('details-cancel').addEventListener('click', () => $('details-dialog').close());
+$('details-dialog').addEventListener('cancel', event => {
+  if (savingDetails) event.preventDefault();
+});
+$('details-dialog').addEventListener('close', () => { editingAnalysis = null; });
+$('details-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (savingDetails || !editingAnalysis) return;
+  const id = editingAnalysis;
+  const details = {title: $('details-title').value.trim(), description: $('details-description').value.trim()};
+  if (!details.title || [...details.title].length > 120) {
+    showMessage('details-error', {key: 'error.detailsTitle'});
+    $('details-error').hidden = false;
+    $('details-title').focus();
+    return;
+  }
+  savingDetails = true;
+  $('details-form').setAttribute('aria-busy', 'true');
+  for (const input of $('details-form').elements) input.disabled = true;
+  $('details-error').hidden = true;
   try {
-    const data = await get('/api/overview');
-    overview = data;
-    activeRevision = data.revision;
-    messages.delete('summary');
-    messages.delete('queue-count');
-    renderOverview();
-    if (data.top.length) await inspect(data.top[0].gid);
+    const response = await fetch(`/api/analyses/${encodeURIComponent(id)}/details`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(details)
+    });
+    const saved = await response.json();
+    if (!response.ok) throw new ApiError(saved, response.status);
+    historyData.analyses = historyData.analyses.map(entry => entry.id === id ? {...entry, ...saved} : entry);
+    $('details-dialog').close();
+    renderHistory();
+    document.querySelector(`[data-analysis-id="${id}"] .edit-details`)?.focus();
   } catch (error) {
-    showMessage('summary', {key: 'summary.unavailable'});
-    showError('error', error);
+    showError('details-error', error);
+  } finally {
+    savingDetails = false;
+    $('details-form').setAttribute('aria-busy', 'false');
+    for (const input of $('details-form').elements) input.disabled = false;
+  }
+});
+async function loadHistory() {
+  try {
+    historyData = await get('/api/analyses');
+    $('history-error').hidden = true;
+    renderHistory();
+  } catch (error) {
+    showError('history-error', error);
   }
 }
 function renderStatus() {
   if (!analysisStatus) return;
   const status = analysisStatus;
+  $('analysis-status').dataset.state = status.state;
   const description = status.state === 'failed' ?
     `${t(status.error_message?.key || 'error.analysis', status.error_message?.params)} ${t('status.preserved')}` : t('status.' + status.state);
   $('analysis-status').textContent = `${t('state.' + status.state)}: ${description}` +
@@ -374,8 +575,10 @@ function renderStatus() {
 }
 let statusTimer = null;
 function uploadBusy(busy) {
+  busy = Boolean(busy || openingAnalysis);
   $('upload-form').setAttribute('aria-busy', String(busy));
   for (const input of $('upload-form').elements) input.disabled = busy;
+  renderHistory();
 }
 async function pollStatus() {
   clearTimeout(statusTimer);
@@ -388,7 +591,12 @@ async function pollStatus() {
     renderStatus();
     $('upload-error').hidden = status.state !== 'failed';
     if (status.state === 'failed') showMessage('upload-error', status.error_message || {key: 'error.analysis'});
-    if (status.revision && status.revision !== activeRevision) await loadOverview();
+    $('show-results').disabled = !(activeRevision || status.revision);
+    if (!busy) await loadHistory();
+    if (pendingUpload && !busy) {
+      pendingUpload = false;
+      if (status.state === 'succeeded' && status.revision) await navigate(status.revision);
+    }
     if (busy) statusTimer = setTimeout(pollStatus, 400);
     return status;
   } catch (error) {
@@ -414,6 +622,7 @@ $('upload-form').addEventListener('submit', async event => {
     const response = await fetch('/api/analysis', {method: 'POST', body: form});
     const data = await response.json();
     if (!response.ok) throw new ApiError(data, response.status);
+    pendingUpload = true;
     await pollStatus();
   } catch (error) {
     uploadBusy(false);
@@ -424,6 +633,7 @@ $('upload-form').addEventListener('submit', async event => {
 function renderFiles() {
   for (const name of ['nodes', 'edges', 'transactions']) {
     $('filename-' + name).textContent = $('upload-' + name).files[0]?.name || t('upload.emptyFile');
+    $('upload-' + name).closest('.file-field').classList.toggle('has-file', Boolean($('upload-' + name).files.length));
   }
 }
 function renderLanguage() {
@@ -432,8 +642,10 @@ function renderLanguage() {
   renderFiles();
   renderOverview();
   renderStatus();
+  renderHistory();
   for (const [id, part] of messages) showMessage(id, part);
   if (current && !$('account-area').hidden) renderAccount();
+  showView();
 }
 $('language').addEventListener('change', () => {
   setLocale($('language').value);
@@ -453,6 +665,8 @@ for (const name of ['nodes', 'edges', 'transactions']) $('upload-' + name).addEv
       showMessage('summary', {key: 'summary.empty'});
       showMessage('queue-count', {key: 'queue.empty'});
     }
+    if (location.pathname === '/') history.replaceState(null, '', '/analyses');
+    await renderRoute();
     if (unavailable.length) {
       showMessage('error', {key: 'error.catalog'});
       $('error').hidden = false;
