@@ -1,31 +1,164 @@
-"""Read-only loopback dashboard; serves only explicit local assets and exports."""
+"""Loopback dashboard with isolated upload runs and atomic in-memory publication."""
+from dataclasses import dataclass
+from email import policy
+from email.parser import BytesParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import json
 from pathlib import Path
 import re
+import tempfile
+import threading
 from urllib.parse import parse_qs, urlsplit
+import uuid
 
-from .pipeline import Analysis, SCHEMAS, dashboard_data, json_bytes
+from .pipeline import Analysis, SCHEMAS, ValidationError, cluster_description_parts, dashboard_data, json_bytes, run
+from .i18n import message, render
+
+NODE_LIMIT = 50
+MAX_UPLOAD_BYTES = 64 * 1024 * 1024
+INPUT_NAMES = ('nodes', 'edges', 'transactions')
+BUSY = {'receiving', 'validating', 'analyzing', 'exporting'}
+
+
+@dataclass(frozen=True)
+class Snapshot:
+    revision: str
+    data: dict
+    nodes: dict
+    incident: dict
+    peers: dict
+    exports: dict[str, bytes]
+
+    @classmethod
+    def create(cls, result: Analysis, out_dir: Path, revision: str) -> 'Snapshot':
+        data = dashboard_data(result)
+        membership = {n['gid']: n['cluster_id'] for n in result.nodes}
+        data['clusters'] = [dict(cluster) for cluster in data['clusters']]
+        for cluster in data['clusters']:
+            cid = cluster['cluster_id']
+            members = [n for n in result.nodes if n['cluster_id'] == cid]
+            internal = [(a, b, d) for a, b, d in result.graph.edges(data=True)
+                        if membership[a] == cid == membership[b]]
+            cluster['description_parts'] = cluster_description_parts(members, internal, result.graph, membership)
+            cluster['role_counts'] = {role: sum(n['role'] == role for n in members)
+                                      for role in sorted({n['role'] for n in members})}
+        nodes = {n['gid']: n for n in data['nodes']}
+        incident: dict[str, list[dict]] = {gid: [] for gid in nodes}
+        peers: dict[str, set[str]] = {gid: set() for gid in nodes}
+        for edge in data['edges']:
+            a, b = edge['src'], edge['dst']
+            incident[a].append(edge)
+            if b != a:
+                incident[b].append(edge)
+                peers[a].add(b)
+                peers[b].add(a)
+        exports = {name: (out_dir / name).read_bytes() for name in [*SCHEMAS, 'run_manifest.json']}
+        return cls(revision, data, nodes, incident, peers, exports)
+
+    def neighborhood(self, gid: str, hops: int) -> dict:
+        # Either direction defines hop distance; all display edges stay directed.
+        distances = {gid: 0}
+        frontier = {gid}
+        for depth in range(1, hops + 1):
+            frontier = {peer for account in frontier for peer in self.peers[account]} - distances.keys()
+            distances.update((peer, depth) for peer in frontier)
+        ordered = sorted(distances, key=lambda peer: (distances[peer], int(peer)))
+        visible = set(ordered[:NODE_LIMIT])
+        edges = [e for peer in ordered[:NODE_LIMIT] for e in self.incident[peer]
+                 if e['src'] == peer and e['dst'] in visible]
+        return dict(revision=self.revision, center=gid, hops=hops, node_limit=NODE_LIMIT,
+                    total_nodes=len(ordered), omitted_nodes=max(0, len(ordered) - NODE_LIMIT),
+                    nodes=[dict(self.nodes[peer], hop=distances[peer]) for peer in ordered[:NODE_LIMIT]],
+                    edges=edges)
+
+
+def parse_upload(content_type: str, body: bytes) -> dict[str, bytes]:
+    message = BytesParser(policy=policy.default).parsebytes(
+        f'Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n'.encode('ascii') + body)
+    if message.get_content_type() != 'multipart/form-data' or not message.is_multipart() or message.defects:
+        raise ValidationError('error.multipart')
+    files = {}
+    for part in message.iter_parts():
+        name = part.get_param('name', header='content-disposition')
+        if (part.defects or part.is_multipart() or part.get_content_disposition() != 'form-data'
+                or name not in INPUT_NAMES or name in files or part.get_filename() != f'{name}.parquet'):
+            raise ValidationError('error.exactFiles')
+        payload = part.get_payload(decode=True)
+        if not payload:
+            raise ValidationError('error.emptyFile', name=name)
+        files[name] = payload
+    if set(files) != set(INPUT_NAMES):
+        raise ValidationError('error.threeFiles')
+    return files
 
 
 class DashboardServer(ThreadingHTTPServer):
     daemon_threads = True
 
+    def __init__(self, result: Analysis | None, out_dir: Path, port: int, handler):
+        self.out_dir = out_dir
+        self.lock = threading.Lock()
+        self.active = Snapshot.create(result, out_dir, 'startup') if result else None
+        self.job = dict(state='idle', message=render(message('status.idle')), run_directory=None)
+        self.worker: threading.Thread | None = None
+        super().__init__(('127.0.0.1', port), handler)
 
-def make_server(result: Analysis, out_dir: Path, port: int = 8765) -> DashboardServer:
-    data = dashboard_data(result)
-    nodes = {n['gid']: n for n in data['nodes']}
-    incident: dict[str, list[dict]] = {gid: [] for gid in nodes}
-    for edge in data['edges']:
-        incident[edge['src']].append(edge)
-        if edge['dst'] != edge['src']:
-            incident[edge['dst']].append(edge)
-    overview = {k: data[k] for k in ['profile', 'config', 'warnings', 'clusters', 'top']}
+    def status(self) -> dict:
+        with self.lock:
+            return dict(self.job, revision=self.active.revision if self.active else None,
+                        node_limit=NODE_LIMIT, max_upload_bytes=MAX_UPLOAD_BYTES)
+
+    def progress(self, state: str) -> None:
+        with self.lock:
+            self.job.update(state=state, message=render(message('status.' + state)))
+
+    def fail(self, error: ValidationError) -> None:
+        with self.lock:
+            self.job.update(state='failed', message=str(error) + ' ' + render(message('status.preserved')),
+                            error_message=error.message)
+
+    def analyze_upload(self, files: dict[str, bytes]) -> None:
+        try:
+            uploads = self.out_dir / 'uploads'
+            uploads.mkdir(parents=True, exist_ok=True)
+            revision = uuid.uuid4().hex
+            with tempfile.TemporaryDirectory(prefix='.pending-', dir=uploads) as temporary:
+                stage = Path(temporary)
+                inputs, outputs = stage / 'input', stage / 'output'
+                inputs.mkdir()
+                for name, payload in files.items():
+                    (inputs / f'{name}.parquet').write_bytes(payload)
+                result, manifest = run(inputs, outputs, self.progress)
+                snapshot = Snapshot.create(result, outputs, revision)
+                destination = uploads / revision
+                # Retain reproducible raw inputs and complete artifacts only on success.
+                stage.rename(destination)
+                with self.lock:
+                    self.active = snapshot
+                    self.job = dict(state='succeeded', message=render(message('status.succeeded')),
+                                    run_directory=str(destination.resolve()), elapsed_seconds=manifest['elapsed_seconds'])
+        except ValidationError as error:
+            self.fail(error)
+        except Exception:
+            # Do not leak raw data or filesystem details from parser/runtime errors.
+            self.fail(ValidationError('error.analysis'))
+
+    def server_close(self) -> None:
+        super().server_close()
+        if self.worker:
+            self.worker.join()
+
+
+def make_server(result: Analysis | None, out_dir: Path, port: int = 8765) -> DashboardServer:
     static = Path(__file__).parent / 'static'
     assets = {'/': ('index.html', 'text/html'), '/style.css': ('style.css', 'text/css'),
-              '/app.js': ('app.js', 'text/javascript')}
+              '/file-preview.js': ('file-preview.js', 'text/javascript'),
+              '/app.js': ('app.js', 'text/javascript'), '/i18n.js': ('i18n.js', 'text/javascript'),
+              **{f'/locales/{locale}.json': (f'locales/{locale}.json', 'application/json')
+                 for locale in ('en', 'kk', 'ru')}}
 
     class Handler(BaseHTTPRequestHandler):
+        server: DashboardServer
+
         def log_message(self, format: str, *args: object) -> None:
             # Avoid logging customer queries/IDs. The UI displays explicit errors.
             return
@@ -36,49 +169,118 @@ def make_server(result: Analysis, out_dir: Path, port: int = 8765) -> DashboardS
             self.send_header('Content-Length', str(len(body)))
             self.send_header('Cache-Control', 'no-store')
             self.send_header('X-Content-Type-Options', 'nosniff')
-            self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
+            self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
             self.end_headers()
             self.wfile.write(body)
 
-        def error(self, status: int, message: str) -> None:
-            self.send(status, json_bytes({'error': message}), 'application/json')
+        def error(self, status: int, key: str, **params: object) -> None:
+            part = message(key, **params)
+            self.send(status, json_bytes({'error': render(part), 'error_message': part}), 'application/json')
+
+        def local_request(self, mutation: bool = False) -> bool:
+            allowed_hosts = {f'127.0.0.1:{self.server.server_port}', f'localhost:{self.server.server_port}'}
+            host = self.headers.get('Host')
+            if host not in allowed_hosts or (mutation and self.headers.get('Origin') != f'http://{host}'):
+                self.close_connection = True
+                self.error(403, 'error.origin')
+                return False
+            return True
+
+        def do_POST(self) -> None:
+            if not self.local_request(mutation=True):
+                return
+            if self.path != '/api/analysis':
+                self.close_connection = True
+                self.error(404, 'error.notFound')
+                return
+            lengths = self.headers.get_all('Content-Length', [])
+            if self.headers.get('Transfer-Encoding') or len(lengths) != 1 or not lengths[0].isdigit():
+                self.close_connection = True
+                self.error(400, 'error.contentLength')
+                return
+            length = int(lengths[0])
+            if not 0 < length <= MAX_UPLOAD_BYTES:
+                self.close_connection = True
+                self.error(413, 'error.uploadLimit')
+                return
+            with self.server.lock:
+                busy = self.server.job['state'] in BUSY
+                if not busy:
+                    self.server.job = dict(state='receiving', message=render(message('status.receiving')), run_directory=None)
+            if busy:
+                self.close_connection = True
+                self.error(409, 'error.busy')
+                return
+            try:
+                self.connection.settimeout(30)
+                body = self.rfile.read(length)
+                if len(body) != length:
+                    raise ValidationError('error.interrupted')
+                files = parse_upload(self.headers.get('Content-Type', ''), body)
+            except (ValidationError, ValueError, OSError) as error:
+                failure = error if isinstance(error, ValidationError) else ValidationError('error.receive')
+                self.server.fail(failure)
+                self.error(400, failure.message['key'], **failure.message['params'])
+                return
+            self.server.progress('validating')
+            self.server.worker = threading.Thread(target=self.server.analyze_upload, args=(files,), daemon=True)
+            self.server.worker.start()
+            self.send(202, json_bytes({'message': render(message('status.accepted'))}), 'application/json')
 
         def do_GET(self) -> None:
-            # Reject nonlocal Host headers (including DNS rebinding origins).
-            allowed_hosts = {f'127.0.0.1:{self.server.server_port}', f'localhost:{self.server.server_port}'}
-            if self.headers.get('Host') not in allowed_hosts:
-                self.error(403, 'Only this loopback host is allowed.')
+            if not self.local_request():
                 return
             url = urlsplit(self.path)
-            if url.path == '/api/overview':
-                self.send(200, json_bytes(overview), 'application/json')
-            elif url.path == '/api/account':
-                query = parse_qs(url.query, keep_blank_values=True)
-                values = query.get('gid', [])
-                if set(query) != {'gid'} or len(values) != 1 or not re.fullmatch(r'-?(0|[1-9][0-9]{0,18})', values[0]):
-                    self.error(400, 'Enter an exact decimal client ID (int64).')
-                    return
-                gid = values[0]
-                if not -(2**63) <= int(gid) < 2**63:
-                    self.error(400, 'Client ID is outside the int64 range.')
-                    return
-                if gid not in nodes:
-                    self.error(404, 'Client ID was not found in this dataset.')
-                    return
-                links = incident[gid]
-                peers = {e['src'] for e in links} | {e['dst'] for e in links} | {gid}
-                self.send(200, json_bytes(dict(account=nodes[gid], edges=links,
-                    neighbors=[nodes[g] for g in sorted(peers, key=int)],
-                    cluster=data['clusters'][nodes[gid]['cluster_id']])), 'application/json')
-            elif url.path in assets:
+            if url.path in assets:
                 filename, content_type = assets[url.path]
                 self.send(200, (static / filename).read_bytes(), content_type)
-            elif url.path.removeprefix('/exports/') in SCHEMAS and url.path.startswith('/exports/'):
-                try:
-                    self.send(200, (out_dir / url.path.removeprefix('/exports/')).read_bytes(), 'text/csv')
-                except OSError:
-                    self.error(503, 'Export unavailable; rerun the pipeline.')
+                return
+            if url.path == '/api/status':
+                self.send(200, json_bytes(self.server.status()), 'application/json')
+                return
+            with self.server.lock:
+                snapshot = self.server.active
+            if url.path not in {'/api/overview', '/api/account', '/api/graph'} and not (
+                    url.path.startswith('/exports/') and url.path.removeprefix('/exports/') in [*SCHEMAS, 'run_manifest.json']):
+                self.error(404, 'error.notFound')
+                return
+            if snapshot is None:
+                self.error(503, 'error.noAnalysis')
+                return
+            if url.path == '/api/overview':
+                self.send(200, json_bytes(dict(revision=snapshot.revision, **{k: snapshot.data[k]
+                    for k in ['profile', 'config', 'warnings', 'clusters', 'top']})), 'application/json')
+            elif url.path in {'/api/account', '/api/graph'}:
+                query = parse_qs(url.query, keep_blank_values=True)
+                allowed = {'gid', 'revision', 'hops'} if url.path == '/api/graph' else {'gid', 'revision'}
+                gid = query.get('gid', [''])[0]
+                if (set(query) - allowed or any(len(v) != 1 for v in query.values())
+                        or not re.fullmatch(r'-?(0|[1-9][0-9]{0,18})', gid)):
+                    self.error(400, 'error.invalidId')
+                    return
+                if not -(2**63) <= int(gid) < 2**63:
+                    self.error(400, 'error.idRange')
+                    return
+                if query.get('revision', [snapshot.revision])[0] != snapshot.revision:
+                    self.error(409, 'error.stale')
+                    return
+                if gid not in snapshot.nodes:
+                    self.error(404, 'error.missingId')
+                    return
+                if url.path == '/api/graph':
+                    hops = query.get('hops', [''])[0]
+                    if hops not in {'1', '2'}:
+                        self.error(400, 'error.hops')
+                        return
+                    payload = snapshot.neighborhood(gid, int(hops))
+                else:
+                    payload = dict(revision=snapshot.revision, account=snapshot.nodes[gid],
+                        edges=snapshot.incident[gid], graph=snapshot.neighborhood(gid, 1),
+                        neighbors=[snapshot.nodes[peer] for peer in sorted(snapshot.peers[gid] | {gid}, key=int)],
+                        cluster=snapshot.data['clusters'][snapshot.nodes[gid]['cluster_id']])
+                self.send(200, json_bytes(payload), 'application/json')
             else:
-                self.error(404, 'Resource not found.')
+                name = url.path.removeprefix('/exports/')
+                self.send(200, snapshot.exports[name], 'application/json' if name.endswith('.json') else 'text/csv')
 
-    return DashboardServer(('127.0.0.1', port), Handler)
+    return DashboardServer(result, out_dir, port, Handler)
