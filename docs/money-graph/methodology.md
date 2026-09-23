@@ -1,4 +1,4 @@
-# Implemented methodology — first local version
+# Implemented methodology — minimal v2
 
 The [README rule table and equations](../../README.md#rules-and-scores) are the implemented contract. Code lives in `money_graph/pipeline.py`; synthetic motifs and counterexamples live in `tests/test_money_graph.py`. These are transparent heuristic choices, not learned labels, calibrated probabilities or evidence of wrongdoing.
 
@@ -18,7 +18,7 @@ Priority is the sum of five exposed contributions: incoming peers, outgoing peer
 
 Weighted Louvain runs on a sorted undirected projection with reciprocal amounts added, seed 42, resolution 1.0 and threshold 1e-7. Self-links are excluded from community affinity. Isolates become singleton groups. Cluster IDs are assigned by ascending minimum gid. The original directed graph is retained for every flow calculation and display.
 
-Cluster descriptions give member count, internal directed edge count, role composition and boundary count. Member/seed counts, top gids and internal KZT are independently reconciled in acceptance checks. A community is an observed structural grouping, not a proven organization. Pinning versions and insertion order supports repeatability; it does not establish robustness to different algorithms or resolutions.
+Cluster descriptions give member count, internal directed edge count, role composition and boundary count. They count fan-in candidates (incoming peers ≥3 and ≥2× outgoing), fan-out candidates (outgoing peers ≥5 and ≥2× incoming), and potential bridging accounts with incoming and outgoing peers in different communities. These motifs use all observed peers, not only internal links, and do not depend on which competing role wins. Self-links are excluded from peer counts. Examples maximize the relevant degree or neighbor-community count, breaking ties by exact numeric gid; fan examples report in/out peers and KZT, bridging examples report community and cross-community-peer counts. No matching motif produces an explicit no-pattern statement. Every summary repeats collection caveats. These descriptive counts do not alter community detection, roles, confidence or priority. Member/seed counts, top gids and internal KZT are independently reconciled in acceptance checks. A community is an observed structural grouping, not a proven organization. Pinning versions and insertion order supports repeatability; it does not establish robustness to different algorithms or resolutions.
 
 ## Interpretation limits
 
@@ -28,3 +28,9 @@ Cluster descriptions give member count, internal directed edge count, role compo
 - No invented customer attributes or external enrichment. No model training, application LLM or paid/cloud service participates in reproduction.
 
 Correctness, coverage, deterministic outputs and browser behavior are tested. AML accuracy, threshold sensitivity and partition robustness remain unmeasured without independent investigation or ground truth.
+
+## Exploration and upload publication
+
+Graph distance counts connections in either direction, independently of transfer direction and original collection depth. Breadth-first neighborhoods stop at one or two hops. At most 50 accounts are selected by distance then numeric gid, including the center. Every edge in the induced directed subgraph is displayed, including self/reciprocal links. Eligible and omitted counts make truncation explicit; it never removes accounts from calculations or exports.
+
+Uploads run the same validation, analysis and export pipeline as the CLI, in separate local directories. A complete result snapshot and downloadable CSV/manifest bytes are published together after successful processing. Failed input or runtime errors leave the active snapshot intact. Successful upload inputs and outputs are retained for deterministic reproduction; the original startup output is preserved.
