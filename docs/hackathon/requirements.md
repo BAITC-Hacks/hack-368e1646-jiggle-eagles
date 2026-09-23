@@ -77,7 +77,7 @@ Minimum role dictionary: `consolidator`, `transit`, `distributor`, `terminal`, `
 ## Decisions and remaining limits
 
 - The actual data contract, archive/starter hashes, float tolerance and component reconciliation are in [data profile](data-profile.md).
-- The [README](../../README.md) documents adopted rules, confidence, priority, deterministic ordering, exact-ID CSV/JSON serialization and community parameters. Requirements files pin runtime/test versions; [disclosures](../../DISCLOSURES.md) identify sources and licenses.
+- The [README](../../README.md) documents adopted rules, confidence, priority, deterministic ordering, exact-ID CSV/JSON serialization and community parameters. Requirements files pin runtime/test versions; [disclosures](../../disclosures/README.md) identify sources and licenses.
 - The user requested a small local version: no application LLM, model training, database, authentication or cloud dependency. Optional temporal matching, cycle analysis and sensitivity checks are not implemented.
 - Local completeness, runtime, deterministic output and browser behavior are verified; role accuracy is unmeasured because ground truth is absent. A separate-machine setup rehearsal, remote CI and the live organizer presentation remain unperformed.
 - The user/team captain retains ownership of reviewer data access, current event rules and submission. Working inputs/results use ignored `data/private/`; existing reference Parquet copies under `docs/my-docs/data/` are tracked and were preserved. No push, additional redistribution or public hosting is part of this setup change.
